@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import { thermalColor } from '../thermal'
+import { pointInPolygon } from '../geo'
 import FilterRail from './FilterRail'
 
 // Leaflet and leaflet.markercluster are loaded from CDN via synchronous <script>
@@ -21,15 +22,6 @@ function isRecent(buoy) {
   } catch {
     return false
   }
-}
-
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371
-  const dLat = ((lat2 - lat1) * Math.PI) / 180
-  const dLon = ((lon2 - lon1) * Math.PI) / 180
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.asin(Math.sqrt(a))
 }
 
 function createMarkerIcon(color, size = 10) {
@@ -165,7 +157,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     }
   }, [selectedBuoy?.id])
 
-  // Draw the persistent research-region circle from shared state.
+  // Draw the persistent research-region polygon from shared state.
   useEffect(() => {
     const map = mapInstanceRef.current
     if (!map) return
@@ -173,37 +165,38 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
       map.removeLayer(regionCircleRef.current)
       regionCircleRef.current = null
     }
-    if (researchRegion) {
-      regionCircleRef.current = L.circle([researchRegion.lat, researchRegion.lon], {
-        radius: researchRegion.radiusKm * 1000,
+    if (researchRegion?.points?.length >= 3) {
+      regionCircleRef.current = L.polygon(researchRegion.points, {
         color: '#ffb627', weight: 1.5, fillColor: '#ffb627', fillOpacity: 0.07,
       }).addTo(map)
     }
-  }, [researchRegion?.lat, researchRegion?.lon, researchRegion?.radiusKm])
+  }, [researchRegion])
 
-  // Circle-draw interaction: mousedown sets center, drag sets radius, mouseup commits.
+  // Freehand lasso: mousedown starts the path, drag traces it, mouseup commits.
   useEffect(() => {
     const map = mapInstanceRef.current
     if (!map || !drawing) return
     map.dragging.disable()
-    let center = null
+    let pts = null
     let temp = null
     const onDown = (e) => {
-      center = e.latlng
-      temp = L.circle(center, { radius: 0, color: '#ffb627', weight: 1.5, fillColor: '#ffb627', fillOpacity: 0.07, dashArray: '4' }).addTo(map)
+      pts = [[e.latlng.lat, e.latlng.lng]]
+      temp = L.polyline(pts, { color: '#ffb627', weight: 1.75, dashArray: '4' }).addTo(map)
     }
     const onMove = (e) => {
-      if (!center || !temp) return
-      temp.setRadius(map.distance(center, e.latlng))
+      if (!pts || !temp) return
+      const last = pts[pts.length - 1]
+      // Skip near-duplicate points to keep the path light.
+      if (Math.abs(last[0] - e.latlng.lat) + Math.abs(last[1] - e.latlng.lng) < 0.02) return
+      pts.push([e.latlng.lat, e.latlng.lng])
+      temp.setLatLngs(pts)
     }
-    const onUp = (e) => {
-      if (!center) return
-      const radiusKm = map.distance(center, e.latlng) / 1000
+    const onUp = () => {
       if (temp) { map.removeLayer(temp); temp = null }
-      if (radiusKm > 0.5) {
-        onRegionChange({ lat: center.lat, lon: center.lng, radiusKm: Math.round(radiusKm) })
+      if (pts && pts.length >= 3) {
+        onRegionChange({ type: 'polygon', points: pts })
       }
-      center = null
+      pts = null
       setDrawing(false)
     }
     map.on('mousedown', onDown)
@@ -218,9 +211,9 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     }
   }, [drawing])
 
-  const regionCount = researchRegion
+  const regionCount = researchRegion?.points?.length >= 3
     ? buoys.filter((b) => b.lat != null && b.lon != null
-        && haversineKm(researchRegion.lat, researchRegion.lon, b.lat, b.lon) <= researchRegion.radiusKm).length
+        && pointInPolygon(b.lat, b.lon, researchRegion.points)).length
     : 0
 
   return (
@@ -233,13 +226,13 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
           <div style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>Research Region</div>
           {drawing ? (
             <>
-              <div style={{ color: 'var(--color-amber)', marginBottom: '0.5rem' }}>Click &amp; drag on the map to draw a circle…</div>
+              <div style={{ color: 'var(--color-amber)', marginBottom: '0.5rem' }}>Click &amp; drag to lasso an area on the map…</div>
               <button className="btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setDrawing(false)}>Cancel</button>
             </>
-          ) : researchRegion ? (
+          ) : researchRegion?.points?.length >= 3 ? (
             <>
               <div className="mono" style={{ color: 'var(--color-text-bright)', marginBottom: '0.4rem' }}>
-                {regionCount} buoys · {researchRegion.radiusKm} km radius
+                {regionCount} buoys in selection
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                 <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={onOpenResearch}>Open in Research →</button>
@@ -251,8 +244,8 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
             </>
           ) : (
             <>
-              <div style={{ color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>Draw a circle to analyze a localized trend.</div>
-              <button className="btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setDrawing(true)}>◯ Draw region</button>
+              <div style={{ color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>Lasso an area to analyze a localized trend.</div>
+              <button className="btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setDrawing(true)}>✏ Draw region</button>
             </>
           )}
         </div>

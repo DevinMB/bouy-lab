@@ -119,9 +119,77 @@ async def get_trend(
     return result
 
 
-# Cap on how many in-region buoys we fetch series for (nearest-first), to bound
-# the per-request cost of a large drawn circle.
+# Cap on how many in-region buoys we fetch series for, to bound the per-request
+# cost of a large drawn selection.
 MAX_REGION_STATIONS = 80
+
+
+async def _trend_from_stations(
+    couch: CouchClient, station_ids: list, stream: str, field: str, hours: int
+) -> tuple:
+    """Aggregate one metric across the given stations into hourly mean/min/max.
+
+    Returns (points, contributing) where contributing is the number of stations
+    that actually had at least one reading in the window.
+    """
+    limit = min(1000, max(48, hours + 12))
+    t1 = int(time.time())
+    t0 = t1 - hours * 3600
+
+    async def _station_buckets(sid: str) -> dict:
+        raw = await couch.get_series(sid, stream, field, limit)
+        seen: dict = {}
+        for pt in raw:
+            ts, val = pt.get("ts"), pt.get("value")
+            if ts is None or val is None:
+                continue
+            b = (ts // 3600) * 3600
+            if t0 <= b <= t1 and b not in seen:  # newest per hour per station
+                seen[b] = val
+        return seen
+
+    per_station = await asyncio.gather(*[_station_buckets(s) for s in station_ids]) if station_ids else []
+    contributing = sum(1 for seen in per_station if seen)
+    buckets: dict = {}
+    for seen in per_station:
+        for b, v in seen.items():
+            buckets.setdefault(b, []).append(v)
+
+    points = []
+    for b in sorted(buckets):
+        vals = buckets[b]
+        points.append({
+            "ts": b,
+            "mean": sum(vals) / len(vals),
+            "min": min(vals),
+            "max": max(vals),
+            "count": len(vals),
+        })
+    return points, contributing
+
+
+async def get_trend_by_stations(
+    couch: CouchClient, cache: TTLCache, stream: str, field: str,
+    station_ids: list, hours: int,
+) -> dict:
+    """Regional trend for an explicit station list (e.g. buoys inside a drawn shape)."""
+    requested = len(station_ids)
+    used = station_ids[:MAX_REGION_STATIONS]
+    key = f"strend:{stream}:{field}:{hours}:{','.join(sorted(used))}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    points, contributing = await _trend_from_stations(couch, used, stream, field, hours)
+    result = {
+        "stream": stream, "field": field, "hours": hours, "points": points,
+        "stationCount": len(used),
+        "contributing": contributing,
+        "requested": requested,
+        "capped": requested > len(used),
+    }
+    cache.set(key, result)
+    return result
 
 
 async def get_regional_trend(
@@ -148,42 +216,11 @@ async def get_regional_trend(
     in_region.sort(key=lambda x: x[0])
     station_ids = [sid for _, sid in in_region[:MAX_REGION_STATIONS]]
 
-    limit = min(1000, max(48, hours + 12))
-    t1 = int(time.time())
-    t0 = t1 - hours * 3600
-
-    async def _station_buckets(sid: str) -> dict:
-        raw = await couch.get_series(sid, stream, field, limit)
-        seen: dict = {}
-        for pt in raw:
-            ts, val = pt.get("ts"), pt.get("value")
-            if ts is None or val is None:
-                continue
-            b = (ts // 3600) * 3600
-            if t0 <= b <= t1 and b not in seen:  # newest per hour per station
-                seen[b] = val
-        return seen
-
-    per_station = await asyncio.gather(*[_station_buckets(sid) for sid in station_ids]) if station_ids else []
-    buckets: dict = {}
-    for seen in per_station:
-        for b, v in seen.items():
-            buckets.setdefault(b, []).append(v)
-
-    points = []
-    for b in sorted(buckets):
-        vals = buckets[b]
-        points.append({
-            "ts": b,
-            "mean": sum(vals) / len(vals),
-            "min": min(vals),
-            "max": max(vals),
-            "count": len(vals),
-        })
-
+    points, contributing = await _trend_from_stations(couch, station_ids, stream, field, hours)
     result = {
         "stream": stream, "field": field, "hours": hours, "points": points,
         "stationCount": len(station_ids),
+        "contributing": contributing,
         "matchedTotal": len(in_region),
         "capped": len(in_region) > len(station_ids),
         "radiusKm": radius_km, "lat": lat, "lon": lon,

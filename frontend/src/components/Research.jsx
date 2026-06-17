@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { fetchResearchTrend, fetchResearchTrendRegion, fetchResearchCorrelate } from '../api'
+import { fetchResearchTrend, fetchResearchTrendStations, fetchResearchCorrelate } from '../api'
+import { pointInPolygon, polygonCentroid, haversineKm } from '../geo'
 
 // Metrics shared across many buoys (stream + field), with their SI unit family.
 const METRICS = [
@@ -66,9 +67,8 @@ const selectStyle = {
   padding: '0.375rem 0.5rem', fontFamily: 'var(--font-body)', outline: 'none',
 }
 
-export default function Research({ buoys, useMetric, researchRegion, onOpenMap }) {
+export default function Research({ buoys, useMetric, researchRegion, scope, onScopeChange, onOpenMap }) {
   const [mode, setMode] = useState('trend')
-  const [scope, setScope] = useState('network')
   const [metricKey, setMetricKey] = useState(METRICS[0].key)
   const [hours, setHours] = useState(120)
   const metric = METRICS.find((m) => m.key === metricKey) || METRICS[0]
@@ -118,7 +118,7 @@ export default function Research({ buoys, useMetric, researchRegion, onOpenMap }
             {[['network', 'Network'], ['region', 'Region']].map(([s, label]) => (
               <button
                 key={s}
-                onClick={() => setScope(s)}
+                onClick={() => onScopeChange(s)}
                 className="btn"
                 style={{
                   border: 'none', borderRadius: 0,
@@ -134,34 +134,52 @@ export default function Research({ buoys, useMetric, researchRegion, onOpenMap }
       </div>
 
       {mode === 'trend'
-        ? <TrendView metric={metric} hours={hours} useMetric={useMetric} scope={scope} region={researchRegion} onOpenMap={onOpenMap} />
+        ? <TrendView metric={metric} hours={hours} useMetric={useMetric} scope={scope} region={researchRegion} buoys={buoys} onOpenMap={onOpenMap} />
         : <MatrixView metric={metric} hours={hours} buoys={buoys} />}
     </div>
   )
 }
 
-function TrendView({ metric, hours, useMetric, scope, region, onOpenMap }) {
+function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }) {
   const [points, setPoints] = useState(null)
   const [meta, setMeta] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const noRegion = scope === 'region' && !region
+  const hasPolygon = (region?.points?.length || 0) >= 3
+  const noRegion = scope === 'region' && !hasPolygon
+
+  // Buoys inside the drawn polygon that report this metric (nearest-centroid first, capped).
+  const regionStations = useMemo(() => {
+    if (scope !== 'region' || !hasPolygon) return []
+    const inside = buoys.filter((b) => b.lat != null && b.lon != null
+      && b.available?.includes(metric.stream)
+      && pointInPolygon(b.lat, b.lon, region.points))
+    if (inside.length <= 80) return inside.map((b) => b.id)
+    const [cLat, cLon] = polygonCentroid(region.points)
+    return inside
+      .sort((a, b) => haversineKm(cLat, cLon, a.lat, a.lon) - haversineKm(cLat, cLon, b.lat, b.lon))
+      .slice(0, 80)
+      .map((b) => b.id)
+  }, [scope, hasPolygon, region, buoys, metric.stream])
 
   useEffect(() => {
     if (noRegion) { setPoints(null); setMeta(null); return }
+    if (scope === 'region' && regionStations.length === 0) {
+      setPoints([]); setMeta({ stationCount: 0, contributing: 0 }); return
+    }
     let alive = true
     setLoading(true)
     setError(null)
     const req = scope === 'region'
-      ? fetchResearchTrendRegion(metric.stream, metric.field, region.lat, region.lon, region.radiusKm, hours)
+      ? fetchResearchTrendStations(metric.stream, metric.field, regionStations, hours)
       : fetchResearchTrend(metric.stream, metric.field, hours)
     req
       .then((res) => { if (alive) { setPoints(res.points || []); setMeta(res) } })
       .catch((e) => { if (alive) setError(String(e)) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [metric.key, hours, scope, region?.lat, region?.lon, region?.radiusKm])
+  }, [metric.key, hours, scope, regionStations.join(',')])
 
   const data = useMemo(() => (points || []).map((p) => ({
     ts: p.ts,

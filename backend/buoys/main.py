@@ -170,6 +170,21 @@ async def research_trend_region(
     return await service.get_regional_trend(couch, cache, stream, field, lat, lon, radius_km, hours)
 
 
+@app.get("/api/research/trend_stations")
+async def research_trend_stations(
+    stream: str = Query(...),
+    field: str = Query(...),
+    stations: str = Query(..., description="Comma-separated station IDs (e.g. buoys inside a drawn shape)"),
+    hours: int = Query(default=120, ge=6, le=720),
+):
+    couch = _get_couch()
+    cache = _get_cache()
+    station_ids = [s.strip() for s in stations.split(",") if s.strip()]
+    if not station_ids:
+        raise HTTPException(status_code=422, detail="No station IDs provided")
+    return await service.get_trend_by_stations(couch, cache, stream, field, station_ids, hours)
+
+
 @app.get("/api/research/correlate")
 async def research_correlate(
     stream: str = Query(...),

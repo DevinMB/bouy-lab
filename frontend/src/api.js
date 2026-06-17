@@ -35,8 +35,9 @@ export async function fetchResearchCorrelate(stream, field, stations, hours = 12
   return apiFetch(`/research/correlate?stream=${stream}&field=${field}&stations=${ids}&hours=${hours}`)
 }
 
-export async function fetchResearchTrendRegion(stream, field, lat, lon, radiusKm, hours = 120) {
-  return apiFetch(`/research/trend_region?stream=${stream}&field=${field}&lat=${lat}&lon=${lon}&radius_km=${radiusKm}&hours=${hours}`)
+export async function fetchResearchTrendStations(stream, field, stations, hours = 120) {
+  const ids = encodeURIComponent(stations.join(','))
+  return apiFetch(`/research/trend_stations?stream=${stream}&field=${field}&stations=${ids}&hours=${hours}`)
 }
 
 export async function fetchHealth() {

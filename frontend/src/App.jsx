@@ -24,6 +24,7 @@ export default function App() {
   const [selectedBuoy, setSelectedBuoy] = useState(null)
   const [nearbyOrigin, setNearbyOrigin] = useState(null)
   const [researchRegion, setResearchRegion] = useState(null)
+  const [researchScope, setResearchScope] = useState('network')
   const statsLoadedRef = useRef(false)
   const deepLinkId = useRef(buoyIdFromPath())
 
@@ -140,7 +141,7 @@ export default function App() {
               onNearbyRequest={handleNearbyRequest}
               researchRegion={researchRegion}
               onRegionChange={setResearchRegion}
-              onOpenResearch={() => setTab('research')}
+              onOpenResearch={() => { setResearchScope('region'); setTab('research') }}
             />
           </Suspense>
         </div>
@@ -164,7 +165,7 @@ export default function App() {
 
         {tab === 'research' && (
           <Suspense fallback={<div className="loading-veil">Loading research…</div>}>
-            <Research buoys={buoys} useMetric={useMetric} researchRegion={researchRegion} onOpenMap={() => setTab('map')} />
+            <Research buoys={buoys} useMetric={useMetric} researchRegion={researchRegion} scope={researchScope} onScopeChange={setResearchScope} onOpenMap={() => setTab('map')} />
           </Suspense>
         )}
       </div>
