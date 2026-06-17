@@ -156,20 +156,6 @@ async def research_trend(
     return await service.get_trend(couch, cache, stream, field, hours)
 
 
-@app.get("/api/research/trend_region")
-async def research_trend_region(
-    stream: str = Query(...),
-    field: str = Query(...),
-    lat: float = Query(..., ge=-90, le=90),
-    lon: float = Query(..., ge=-180, le=180),
-    radius_km: float = Query(..., gt=0, le=5000),
-    hours: int = Query(default=120, ge=6, le=720),
-):
-    couch = _get_couch()
-    cache = _get_cache()
-    return await service.get_regional_trend(couch, cache, stream, field, lat, lon, radius_km, hours)
-
-
 @app.get("/api/research/trend_stations")
 async def research_trend_stations(
     stream: str = Query(...),

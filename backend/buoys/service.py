@@ -192,43 +192,6 @@ async def get_trend_by_stations(
     return result
 
 
-async def get_regional_trend(
-    couch: CouchClient, cache: TTLCache, stream: str, field: str,
-    lat: float, lon: float, radius_km: float, hours: int,
-) -> dict:
-    """Mean + min/max band for one metric across buoys within a drawn circle."""
-    key = f"rtrend:{stream}:{field}:{hours}:{round(lat, 2)}:{round(lon, 2)}:{round(radius_km, 1)}"
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
-
-    snapshot = await get_snapshot(couch, cache, located_only=True)
-    in_region = []
-    for item in snapshot:
-        if stream not in (item.get("available") or []):
-            continue
-        ilat, ilon = item.get("lat"), item.get("lon")
-        if ilat is None or ilon is None:
-            continue
-        dist = haversine_km(lat, lon, ilat, ilon)
-        if dist <= radius_km:
-            in_region.append((dist, item["id"]))
-    in_region.sort(key=lambda x: x[0])
-    station_ids = [sid for _, sid in in_region[:MAX_REGION_STATIONS]]
-
-    points, contributing = await _trend_from_stations(couch, station_ids, stream, field, hours)
-    result = {
-        "stream": stream, "field": field, "hours": hours, "points": points,
-        "stationCount": len(station_ids),
-        "contributing": contributing,
-        "matchedTotal": len(in_region),
-        "capped": len(in_region) > len(station_ids),
-        "radiusKm": radius_km, "lat": lat, "lon": lon,
-    }
-    cache.set(key, result)
-    return result
-
-
 def _bucketed_series(points: list, interval: int = 3600) -> dict:
     """Collapse a [{ts, value}] series into {bucket_ts: value} (newest per bucket)."""
     out = {}

@@ -71,7 +71,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   const mapInstanceRef = useRef(null)
   const clusterGroupRef = useRef(null)
   const markersRef = useRef({})
-  const regionCircleRef = useRef(null)
+  const regionLayerRef = useRef(null)
   const [filters, setFilters] = useState({ text: '', streams: [], reportingOnly: false })
   const [drawing, setDrawing] = useState(false)
 
@@ -161,12 +161,12 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   useEffect(() => {
     const map = mapInstanceRef.current
     if (!map) return
-    if (regionCircleRef.current) {
-      map.removeLayer(regionCircleRef.current)
-      regionCircleRef.current = null
+    if (regionLayerRef.current) {
+      map.removeLayer(regionLayerRef.current)
+      regionLayerRef.current = null
     }
     if (researchRegion?.points?.length >= 3) {
-      regionCircleRef.current = L.polygon(researchRegion.points, {
+      regionLayerRef.current = L.polygon(researchRegion.points, {
         color: '#ffb627', weight: 1.5, fillColor: '#ffb627', fillOpacity: 0.07,
       }).addTo(map)
     }

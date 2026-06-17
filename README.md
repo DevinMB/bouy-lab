@@ -1,6 +1,6 @@
 # World of Buoys
 
-Self-hosted visualization of the NOAA NDBC buoy network. Dark telemetry UI with live map, fleet operations dashboard, and nearby-buoy finder. Kafka-native pipeline, CouchDB storage.
+Self-hosted visualization of the NOAA NDBC buoy network. Dark telemetry UI with a live map, fleet operations dashboard, nearby-buoy finder, and a research tab for network/regional trends and cross-buoy correlation. Shareable per-buoy links. Kafka-native pipeline, CouchDB storage.
 
 ## Architecture
 
@@ -124,6 +124,9 @@ All temperatures in °C, wind in m/s, wave heights in m, pressure in hPa. The fr
 | GET | `/api/buoys/{id}/nearby` | Nearest stations (`?radius_km=200&limit=10`) |
 | GET | `/api/nearby` | Nearest to coordinates (`?lat=31.4&lon=-80.9&radius_km=200`) |
 | GET | `/api/stats` | Fleet stats: totals, byOwner, byType, coverage, SST histogram |
+| GET | `/api/research/trend` | Network-wide hourly mean + min/max band (`?stream=spec&field=waveHeight&hours=120`) |
+| GET | `/api/research/trend_stations` | Regional trend for an explicit station list (`?stations=41008,44013&...`) |
+| GET | `/api/research/correlate` | Pairwise correlation matrix across selected buoys (`?stations=...`) |
 
 Example:
 ```bash

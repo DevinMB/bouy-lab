@@ -192,7 +192,7 @@ function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }
   const peakCount = data.reduce((m, d) => Math.max(m, d.count), 0)
 
   const title = scope === 'region'
-    ? `Region ${metric.label} — ${meta?.stationCount ?? '…'} buoys within ${region?.radiusKm} km (${hours}h)`
+    ? `Region ${metric.label} — ${meta?.contributing ?? meta?.stationCount ?? '…'} buoys in selection (${hours}h)`
     : `Network ${metric.label} — mean & min/max band (${hours}h)`
 
   if (noRegion) {
@@ -201,7 +201,7 @@ function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }
         <div className="chart-container">
           <div className="loading-veil" style={{ height: 200, flexDirection: 'column', gap: '0.75rem' }}>
             <div>No region drawn yet.</div>
-            <button className="btn btn-primary" onClick={onOpenMap}>Go to Map → draw a region</button>
+            <button className="btn btn-primary" onClick={onOpenMap}>Go to Map → lasso a region</button>
           </div>
         </div>
       </div>
@@ -245,7 +245,7 @@ function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }
             </ResponsiveContainer>
             <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)', marginTop: '0.5rem' }}>
               Up to {peakCount} buoys per hour · band shows the spread
-              {scope === 'region' && meta?.capped ? ` · nearest ${meta.stationCount} of ${meta.matchedTotal} buoys` : ''}
+              {scope === 'region' && meta?.capped ? ` · nearest ${meta.stationCount} of ${meta.requested} reporting buoys` : ''}
             </div>
           </>
         )}
