@@ -1,0 +1,15 @@
+.env
+*.env
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+dist/
+node_modules/
+*.egg-info/
+.DS_Store
+*.log
+CLAUDE.md   
+

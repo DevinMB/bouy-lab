@@ -1,0 +1,50 @@
+name: world-of-buoys
+
+services:
+  ingest:
+    build: ./backend
+    image: world-of-buoys:latest
+    command: ["python", "-m", "buoys.ingest"]
+    restart: unless-stopped
+    env_file: .env
+
+  sink:
+    image: world-of-buoys:latest
+    command: ["python", "-m", "buoys.sink"]
+    depends_on: [ingest]
+    restart: unless-stopped
+    env_file: .env
+
+  backend:
+    image: world-of-buoys:latest
+    command: ["uvicorn", "buoys.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on: [sink]
+    restart: unless-stopped
+    env_file: .env
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build: ./frontend
+    image: world-of-buoys-frontend:latest
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    ports: ["${WEB_PORT:-8080}:80"]
+
+  # Cloudflare Tunnel — opt-in via: docker compose --profile tunnel up -d
+  # Set CLOUDFLARE_TUNNEL_TOKEN in .env first.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      frontend:
+        condition: service_started
+    profiles: ["tunnel"]
