@@ -381,6 +381,15 @@ body {
   color: var(--color-text-dim);
 }
 
+/* ── Map mobile controls (hidden on desktop) ── */
+.map-controls-toggle {
+  display: none;
+}
+
+.map-backdrop {
+  display: none;
+}
+
 /* ── Responsive ── */
 @media (max-width: 640px) {
   .header {
@@ -388,8 +397,22 @@ body {
     height: 48px;
   }
 
+  /* Secondary info — reclaim header width on small screens */
+  .count-chip {
+    display: none;
+  }
+
+  /* Tabs scroll horizontally instead of overflowing */
+  .tab-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
   .tab {
-    padding: 0 0.875rem;
+    padding: 0 1rem;
+    flex-shrink: 0;
   }
 
   .nearby-page {
@@ -405,5 +428,56 @@ body {
 
   .stat-cards {
     grid-template-columns: 1fr;
+  }
+
+  /* Map: filter rail becomes a toggle drawer; region control is desktop-only */
+  .map-controls-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    position: absolute;
+    top: 0.6rem;
+    left: 0.6rem;
+    z-index: 700;
+    padding: 0.4rem 0.7rem;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: rgba(13, 33, 41, 0.95);
+    color: var(--color-text-bright);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+
+  .map-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 450;
+  }
+
+  .map-overlay-filters {
+    top: 3.1rem !important;
+    left: 0.6rem !important;
+    right: 0.6rem !important;
+    width: auto !important;
+    max-width: 340px;
+    max-height: calc(100% - 4rem) !important;
+    z-index: 500 !important;
+    display: none;
+  }
+  .map-overlay-filters.open {
+    display: block;
+  }
+
+  .map-overlay-region {
+    display: none !important;
+  }
+
+  /* Detail panel fills the screen on phones */
+  .detail-panel {
+    width: 100vw !important;
   }
 }

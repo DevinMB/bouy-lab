@@ -5,7 +5,7 @@ import Sparkline from './Sparkline'
 
 const STREAM_FIELDS = {
   standard: { field: 'waterTemperature', label: 'Water Temp', unit: 'temp' },
-  ocean: { field: 'waterTemperature', label: 'Ocean Temp', unit: 'temp' },
+  ocean: { field: 'waterTemperature', label: 'Subsurface Temp', unit: 'temp' },
   spec: { field: 'waveHeight', label: 'Wave Ht', unit: 'wave' },
   srad: { field: 'solarRadiation', label: 'Solar Rad', unit: '' },
 }
@@ -102,7 +102,7 @@ export default function DetailPanel({ buoy, useMetric, onClose, onNearbyRequest 
   const stationType = detail?.ttype || detail?.type || buoy.type
 
   return (
-    <div style={{
+    <div className="detail-panel" style={{
       position: 'absolute', top: 0, right: 0, width: 340, height: '100%',
       background: 'var(--color-bg-3)', borderLeft: '1px solid var(--color-border)',
       display: 'flex', flexDirection: 'column', zIndex: 500, overflowY: 'auto',

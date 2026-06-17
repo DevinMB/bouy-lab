@@ -74,6 +74,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   const regionLayerRef = useRef(null)
   const [filters, setFilters] = useState({ text: '', streams: [], reportingOnly: false })
   const [drawing, setDrawing] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false) // mobile drawer toggle
 
   // Initialize map once
   useEffect(() => {
@@ -172,23 +173,33 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     }
   }, [researchRegion])
 
-  // Freehand lasso: mousedown starts the path, drag traces it, mouseup commits.
+  // Freehand lasso via pointer events (so it works with both mouse and touch):
+  // pointerdown starts the path, drag traces it, pointerup commits.
   useEffect(() => {
     const map = mapInstanceRef.current
     if (!map || !drawing) return
+    const container = map.getContainer()
     map.dragging.disable()
     let pts = null
     let temp = null
-    const onDown = (e) => {
-      pts = [[e.latlng.lat, e.latlng.lng]]
+    const toLatLng = (ev) => {
+      const rect = container.getBoundingClientRect()
+      return map.containerPointToLatLng(L.point(ev.clientX - rect.left, ev.clientY - rect.top))
+    }
+    const onDown = (ev) => {
+      ev.preventDefault()
+      container.setPointerCapture?.(ev.pointerId)
+      const ll = toLatLng(ev)
+      pts = [[ll.lat, ll.lng]]
       temp = L.polyline(pts, { color: '#ffb627', weight: 1.75, dashArray: '4' }).addTo(map)
     }
-    const onMove = (e) => {
+    const onMove = (ev) => {
       if (!pts || !temp) return
+      const ll = toLatLng(ev)
       const last = pts[pts.length - 1]
       // Skip near-duplicate points to keep the path light.
-      if (Math.abs(last[0] - e.latlng.lat) + Math.abs(last[1] - e.latlng.lng) < 0.02) return
-      pts.push([e.latlng.lat, e.latlng.lng])
+      if (Math.abs(last[0] - ll.lat) + Math.abs(last[1] - ll.lng) < 0.02) return
+      pts.push([ll.lat, ll.lng])
       temp.setLatLngs(pts)
     }
     const onUp = () => {
@@ -199,13 +210,13 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
       pts = null
       setDrawing(false)
     }
-    map.on('mousedown', onDown)
-    map.on('mousemove', onMove)
-    map.on('mouseup', onUp)
+    container.addEventListener('pointerdown', onDown)
+    container.addEventListener('pointermove', onMove)
+    container.addEventListener('pointerup', onUp)
     return () => {
-      map.off('mousedown', onDown)
-      map.off('mousemove', onMove)
-      map.off('mouseup', onUp)
+      container.removeEventListener('pointerdown', onDown)
+      container.removeEventListener('pointermove', onMove)
+      container.removeEventListener('pointerup', onUp)
       if (temp) map.removeLayer(temp)
       map.dragging.enable()
     }
@@ -220,8 +231,14 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     <div style={{ position: 'relative', height: '100%' }}>
       <div ref={mapRef} style={{ position: 'absolute', inset: 0, cursor: drawing ? 'crosshair' : '' }} />
 
+      {/* Mobile-only toggle for the filter drawer */}
+      <button className="map-controls-toggle" onClick={() => setFiltersOpen((o) => !o)} aria-label="Toggle filters">
+        {filtersOpen ? '✕' : '☰'} Filters
+      </button>
+      {filtersOpen && <div className="map-backdrop" onClick={() => setFiltersOpen(false)} />}
+
       {/* Research region control */}
-      <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 400, width: 200 }}>
+      <div className="map-overlay-region" style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 400, width: 200 }}>
         <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>
           <div style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>Research Region</div>
           {drawing ? (
@@ -251,8 +268,8 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
         </div>
       </div>
 
-      {/* Filter rail */}
-      <div style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', width: 220, maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto', zIndex: 400 }}>
+      {/* Filter rail — a toggle drawer on mobile, fixed overlay on desktop */}
+      <div className={`map-overlay-filters${filtersOpen ? ' open' : ''}`} style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', width: 220, maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto', zIndex: 400 }}>
         <FilterRail
           buoys={buoys}
           filters={filters}

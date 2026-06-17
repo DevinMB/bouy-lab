@@ -25,9 +25,15 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def _doc_to_snapshot_item(doc: dict) -> dict:
     streams = doc.get("streams", {})
     std = streams.get("standard", {}).get("values", {}) or {}
+    spec = streams.get("spec", {}).get("values", {}) or {}
     # The stream keys with stored observations are the authoritative "available"
     # set — the probed `available` field on station docs is often empty.
     available = list(streams.keys()) or doc.get("available", [])
+    # Wave height precedence: standard first, then spec (mirrors waterTemp's
+    # standard→ocean fallback). Many buoys report waves only via the spec stream.
+    wave_height = std.get("waveHeight")
+    if wave_height is None:
+        wave_height = spec.get("waveHeight")
     return {
         "id": doc.get("stationId", ""),
         "name": doc.get("name", ""),
@@ -41,7 +47,7 @@ def _doc_to_snapshot_item(doc: dict) -> dict:
             "observedAt": doc.get("observedAt"),
             "windSpeed": std.get("windSpeed"),
             "gustSpeed": std.get("gustSpeed"),
-            "waveHeight": std.get("waveHeight"),
+            "waveHeight": wave_height,
             "pressure": std.get("pressure"),
             "airTemperature": std.get("airTemperature"),
         },

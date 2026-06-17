@@ -16,7 +16,7 @@ const METRICS = [
   { key: 'spec:waveHeight', stream: 'spec', field: 'waveHeight', label: 'Wave Height (spectral)', unit: 'wave' },
   { key: 'spec:swellHeight', stream: 'spec', field: 'swellHeight', label: 'Swell Height', unit: 'wave' },
   { key: 'srad:solarRadiation', stream: 'srad', field: 'solarRadiation', label: 'Solar Radiation', unit: '' },
-  { key: 'ocean:waterTemperature', stream: 'ocean', field: 'waterTemperature', label: 'Ocean Temp', unit: 'temp' },
+  { key: 'ocean:waterTemperature', stream: 'ocean', field: 'waterTemperature', label: 'Subsurface Temp', unit: 'temp' },
 ]
 
 const WINDOWS = [
