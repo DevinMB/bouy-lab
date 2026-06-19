@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import { thermalColor } from '../thermal'
 import { pointInPolygon } from '../geo'
+import { useIsNarrow } from '../hooks'
 import FilterRail from './FilterRail'
 
 // Leaflet and leaflet.markercluster are loaded from CDN via synchronous <script>
@@ -75,6 +76,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   const [filters, setFilters] = useState({ text: '', streams: [], reportingOnly: false })
   const [drawing, setDrawing] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false) // mobile drawer toggle
+  const isNarrow = useIsNarrow()
 
   // Initialize map once
   useEffect(() => {
@@ -231,17 +233,31 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     <div style={{ position: 'relative', height: '100%' }}>
       <div ref={mapRef} style={{ position: 'absolute', inset: 0, cursor: drawing ? 'crosshair' : '' }} />
 
-      {/* Mobile-only toggle for the filter drawer */}
-      <button className="map-controls-toggle" onClick={() => setFiltersOpen((o) => !o)} aria-label="Toggle filters">
-        {filtersOpen ? '✕' : '☰'} Filters
-      </button>
-      {filtersOpen && <div className="map-backdrop" onClick={() => setFiltersOpen(false)} />}
+      {/* Mobile-only toggle for the controls drawer. Hidden while a buoy detail
+          is open, since that panel goes full-screen on mobile. */}
+      {!selectedBuoy && (
+        <button className="map-controls-toggle" onClick={() => setFiltersOpen((o) => !o)} aria-label="Toggle controls">
+          {filtersOpen ? '✕' : '☰'} Filters
+        </button>
+      )}
+      {filtersOpen && !selectedBuoy && <div className="map-backdrop" onClick={() => setFiltersOpen(false)} />}
 
-      {/* Research region control */}
-      <div className="map-overlay-region" style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 400, width: 200 }}>
+      {/* Left control column: filter rail + research region (drawer on mobile).
+          Kept on the left so the right-side detail panel never covers it. */}
+      <div className={`map-overlay-left${filtersOpen && !selectedBuoy ? ' open' : ''}`} style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', width: 220, maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto', zIndex: 400, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <FilterRail
+          buoys={buoys}
+          filters={filters}
+          onFiltersChange={setFilters}
+          useMetric={useMetric}
+        />
+
+        {/* Research region control */}
         <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>
           <div style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>Research Region</div>
-          {drawing ? (
+          {isNarrow ? (
+            <div style={{ color: 'var(--color-text-dim)' }}>Region drawing is available on <b style={{ color: 'var(--color-text)' }}>desktop only</b> — it needs a larger screen to lasso an area.</div>
+          ) : drawing ? (
             <>
               <div style={{ color: 'var(--color-amber)', marginBottom: '0.5rem' }}>Click &amp; drag to lasso an area on the map…</div>
               <button className="btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setDrawing(false)}>Cancel</button>
@@ -266,16 +282,6 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
             </>
           )}
         </div>
-      </div>
-
-      {/* Filter rail — a toggle drawer on mobile, fixed overlay on desktop */}
-      <div className={`map-overlay-filters${filtersOpen ? ' open' : ''}`} style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', width: 220, maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto', zIndex: 400 }}>
-        <FilterRail
-          buoys={buoys}
-          filters={filters}
-          onFiltersChange={setFilters}
-          useMetric={useMetric}
-        />
       </div>
 
       {/* Detail panel */}

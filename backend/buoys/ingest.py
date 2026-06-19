@@ -30,9 +30,6 @@ _owner_map: dict = {}
 # published. Lets the first cycle backfill a window of history, then publish
 # only genuinely-new rows on subsequent cycles.
 _obs_hwm: dict = {}
-# Cap on how many historical rows to backfill per stream the first time we see
-# it (NDBC realtime2 files hold ~45 days of hourly data; the UI shows ~4 days).
-BACKFILL_ROWS = 120
 
 
 async def run_ingest_cycle(producer, last_station_refresh: float) -> float:
@@ -92,7 +89,7 @@ async def run_ingest_cycle(producer, last_station_refresh: float) -> float:
             hwm = _obs_hwm.get(key)
             if hwm is None:
                 # First sighting this process: backfill a bounded history window.
-                to_publish = rows[:BACKFILL_ROWS]
+                to_publish = rows[:CFG.INGEST_BACKFILL_ROWS]
             else:
                 # Steady state: only rows newer than what we've already published.
                 to_publish = [r for r in rows if r["ts"] > hwm]

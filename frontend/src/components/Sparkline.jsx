@@ -1,10 +1,20 @@
 import React from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
+// Full timestamp for the tooltip.
 function formatTs(ts) {
   if (!ts) return ''
   const d = new Date(ts * 1000)
   return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+}
+
+// Compact label for the axis ticks (e.g. "6/16 3p") so they don't collide.
+function formatTsAxis(ts) {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  const h = d.getHours()
+  const h12 = h % 12 || 12
+  return `${d.getMonth() + 1}/${d.getDate()} ${h12}${h < 12 ? 'a' : 'p'}`
 }
 
 export default function Sparkline({ data, label, color = '#3b82f6', unitLabel = '' }) {
@@ -34,11 +44,12 @@ export default function Sparkline({ data, label, color = '#3b82f6', unitLabel = 
         <LineChart data={[...data].reverse()} margin={{ top: 2, right: 4, left: -24, bottom: 0 }}>
           <XAxis
             dataKey="ts"
-            tickFormatter={formatTs}
+            tickFormatter={formatTsAxis}
             tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
             tickLine={false}
             axisLine={false}
             interval="preserveStartEnd"
+            minTickGap={45}
           />
           <YAxis
             tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}

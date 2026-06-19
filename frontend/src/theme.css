@@ -458,7 +458,7 @@ body {
     z-index: 450;
   }
 
-  .map-overlay-filters {
+  .map-overlay-left {
     top: 3.1rem !important;
     left: 0.6rem !important;
     right: 0.6rem !important;
@@ -466,14 +466,10 @@ body {
     max-width: 340px;
     max-height: calc(100% - 4rem) !important;
     z-index: 500 !important;
-    display: none;
-  }
-  .map-overlay-filters.open {
-    display: block;
-  }
-
-  .map-overlay-region {
     display: none !important;
+  }
+  .map-overlay-left.open {
+    display: flex !important;
   }
 
   /* Detail panel fills the screen on phones */

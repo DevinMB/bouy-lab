@@ -41,6 +41,10 @@ class Config:
     STATION_TABLE_REFRESH_SECONDS: int = 86400
     INGEST_STATION_FILTER: list = field(default_factory=list)
     INGEST_MAX_CONCURRENCY: int = 16
+    # Rows of history to backfill per stream on first sight (NDBC files hold ~45
+    # days hourly). Raise temporarily for a one-time deep backfill, then lower it
+    # back to avoid heavy re-publishing on every ingest restart.
+    INGEST_BACKFILL_ROWS: int = 120
 
     # API
     SNAPSHOT_TTL_SECONDS: int = 60
@@ -77,6 +81,7 @@ def _load() -> Config:
         STATION_TABLE_REFRESH_SECONDS=int(_env("STATION_TABLE_REFRESH_SECONDS", "86400")),
         INGEST_STATION_FILTER=station_filter,
         INGEST_MAX_CONCURRENCY=int(_env("INGEST_MAX_CONCURRENCY", "16")),
+        INGEST_BACKFILL_ROWS=int(_env("INGEST_BACKFILL_ROWS", "120")),
         SNAPSHOT_TTL_SECONDS=int(_env("SNAPSHOT_TTL_SECONDS", "60")),
         FRESH_WINDOW_HOURS=int(_env("FRESH_WINDOW_HOURS", "24")),
         CORS_ALLOW_ORIGINS=cors_origins,

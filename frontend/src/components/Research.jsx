@@ -4,25 +4,31 @@ import {
 } from 'recharts'
 import { fetchResearchTrend, fetchResearchTrendStations, fetchResearchCorrelate } from '../api'
 import { pointInPolygon, polygonCentroid, haversineKm } from '../geo'
+import { useIsNarrow } from '../hooks'
 
-// Metrics shared across many buoys (stream + field), with their SI unit family.
+// Metrics shared across many buoys (stream + field), with their SI unit family + chart color.
 const METRICS = [
-  { key: 'standard:waterTemperature', stream: 'standard', field: 'waterTemperature', label: 'Water Temp', unit: 'temp' },
-  { key: 'standard:airTemperature', stream: 'standard', field: 'airTemperature', label: 'Air Temp', unit: 'temp' },
-  { key: 'standard:windSpeed', stream: 'standard', field: 'windSpeed', label: 'Wind Speed', unit: 'wind' },
-  { key: 'standard:gustSpeed', stream: 'standard', field: 'gustSpeed', label: 'Gust Speed', unit: 'wind' },
-  { key: 'standard:waveHeight', stream: 'standard', field: 'waveHeight', label: 'Wave Height', unit: 'wave' },
-  { key: 'standard:pressure', stream: 'standard', field: 'pressure', label: 'Pressure', unit: 'pressure' },
-  { key: 'spec:waveHeight', stream: 'spec', field: 'waveHeight', label: 'Wave Height (spectral)', unit: 'wave' },
-  { key: 'spec:swellHeight', stream: 'spec', field: 'swellHeight', label: 'Swell Height', unit: 'wave' },
-  { key: 'srad:solarRadiation', stream: 'srad', field: 'solarRadiation', label: 'Solar Radiation', unit: '' },
-  { key: 'ocean:waterTemperature', stream: 'ocean', field: 'waterTemperature', label: 'Subsurface Temp', unit: 'temp' },
+  { key: 'standard:waterTemperature', stream: 'standard', field: 'waterTemperature', label: 'Water Temp', unit: 'temp', color: '#ef6a4b' },
+  { key: 'standard:airTemperature', stream: 'standard', field: 'airTemperature', label: 'Air Temp', unit: 'temp', color: '#f59e0b' },
+  { key: 'standard:windSpeed', stream: 'standard', field: 'windSpeed', label: 'Wind Speed', unit: 'wind', color: '#14b8a6' },
+  { key: 'standard:gustSpeed', stream: 'standard', field: 'gustSpeed', label: 'Gust Speed', unit: 'wind', color: '#0ea5e9' },
+  { key: 'standard:waveHeight', stream: 'standard', field: 'waveHeight', label: 'Wave Height', unit: 'wave', color: '#3b82f6' },
+  { key: 'standard:pressure', stream: 'standard', field: 'pressure', label: 'Pressure', unit: 'pressure', color: '#a855f7' },
+  { key: 'spec:waveHeight', stream: 'spec', field: 'waveHeight', label: 'Wave Height (spectral)', unit: 'wave', color: '#6366f1' },
+  { key: 'spec:swellHeight', stream: 'spec', field: 'swellHeight', label: 'Swell Height', unit: 'wave', color: '#8b5cf6' },
+  { key: 'srad:solarRadiation', stream: 'srad', field: 'solarRadiation', label: 'Solar Radiation', unit: '', color: '#eab308' },
+  { key: 'ocean:waterTemperature', stream: 'ocean', field: 'waterTemperature', label: 'Subsurface Temp', unit: 'temp', color: '#fb7185' },
 ]
+
+// Start with a single metric so the first load is one request; the rest are opt-in.
+const DEFAULT_ENABLED = ['standard:waterTemperature']
 
 const WINDOWS = [
   { label: '24h', hours: 24 },
   { label: '3d', hours: 72 },
-  { label: '5d', hours: 120 },
+  { label: '7d', hours: 168 },
+  { label: '14d', hours: 336 },
+  { label: '30d', hours: 720 },
 ]
 
 function convert(v, unit, useMetric) {
@@ -67,47 +73,38 @@ const selectStyle = {
   padding: '0.375rem 0.5rem', fontFamily: 'var(--font-body)', outline: 'none',
 }
 
+const segBtn = (active) => ({
+  border: 'none', borderRadius: 0,
+  background: active ? 'var(--color-amber-dim)' : 'transparent',
+  color: active ? 'var(--color-amber)' : 'var(--color-text-dim)',
+})
+
 export default function Research({ buoys, useMetric, researchRegion, scope, onScopeChange, onOpenMap }) {
+  const isNarrow = useIsNarrow()
   const [mode, setMode] = useState('trend')
-  const [metricKey, setMetricKey] = useState(METRICS[0].key)
-  const [hours, setHours] = useState(120)
-  const metric = METRICS.find((m) => m.key === metricKey) || METRICS[0]
+  const [hours, setHours] = useState(168)
+  const [enabled, setEnabled] = useState(DEFAULT_ENABLED)
+  const [matrixMetricKey, setMatrixMetricKey] = useState(METRICS[0].key)
+
+  const enabledMetrics = METRICS.filter((m) => enabled.includes(m.key))
+  const matrixMetric = METRICS.find((m) => m.key === matrixMetricKey) || METRICS[0]
+  const toggleMetric = (key) =>
+    setEnabled((cur) => cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key])
 
   return (
     <div className="ops-page">
-      {/* Controls */}
+      {/* Controls row */}
       <div className="ops-section" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
         <div style={{ display: 'flex', border: '1px solid var(--color-border)', borderRadius: 4, overflow: 'hidden' }}>
           {[['trend', 'Network Trend'], ['matrix', 'Correlation Matrix']].map(([m, label]) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className="btn"
-              style={{
-                border: 'none', borderRadius: 0,
-                background: mode === m ? 'var(--color-amber-dim)' : 'transparent',
-                color: mode === m ? 'var(--color-amber)' : 'var(--color-text-dim)',
-              }}
-            >
-              {label}
-            </button>
+            <button key={m} onClick={() => setMode(m)} className="btn" style={segBtn(mode === m)}>{label}</button>
           ))}
         </div>
 
-        <select value={metricKey} onChange={(e) => setMetricKey(e.target.value)} style={selectStyle}>
-          {METRICS.map((m) => (
-            <option key={m.key} value={m.key}>{m.label}</option>
-          ))}
-        </select>
-
         <div style={{ display: 'flex', gap: '0.25rem' }}>
           {WINDOWS.map((w) => (
-            <button
-              key={w.hours}
-              onClick={() => setHours(w.hours)}
-              className={`btn${hours === w.hours ? ' btn-amber' : ''}`}
-              style={{ padding: '0.375rem 0.625rem' }}
-            >
+            <button key={w.hours} onClick={() => setHours(w.hours)}
+              className={`btn${hours === w.hours ? ' btn-amber' : ''}`} style={{ padding: '0.375rem 0.625rem' }}>
               {w.label}
             </button>
           ))}
@@ -116,42 +113,113 @@ export default function Research({ buoys, useMetric, researchRegion, scope, onSc
         {mode === 'trend' && (
           <div style={{ display: 'flex', border: '1px solid var(--color-border)', borderRadius: 4, overflow: 'hidden' }}>
             {[['network', 'Network'], ['region', 'Region']].map(([s, label]) => (
-              <button
-                key={s}
-                onClick={() => onScopeChange(s)}
-                className="btn"
-                style={{
-                  border: 'none', borderRadius: 0,
-                  background: scope === s ? 'var(--color-amber-dim)' : 'transparent',
-                  color: scope === s ? 'var(--color-amber)' : 'var(--color-text-dim)',
-                }}
-              >
-                {label}
-              </button>
+              <button key={s} onClick={() => onScopeChange(s)} className="btn" style={segBtn(scope === s)}>{label}</button>
             ))}
           </div>
         )}
+
+        {mode === 'matrix' && (
+          <select value={matrixMetricKey} onChange={(e) => setMatrixMetricKey(e.target.value)} style={selectStyle}>
+            {METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        )}
       </div>
 
+      {/* Metric show/hide chips (trend mode) */}
+      {mode === 'trend' && (
+        <div className="ops-section" style={{ marginTop: '-0.5rem' }}>
+          <div style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.4rem' }}>
+            Metrics — tap to show / hide
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+            {METRICS.map((m) => {
+              const on = enabled.includes(m.key)
+              return (
+                <button key={m.key} onClick={() => toggleMetric(m.key)} className="mono"
+                  style={{
+                    fontSize: '0.6875rem', padding: '0.25rem 0.55rem', borderRadius: 12, cursor: 'pointer',
+                    border: `1px solid ${on ? m.color : 'var(--color-border)'}`,
+                    background: on ? `${m.color}22` : 'transparent',
+                    color: on ? m.color : 'var(--color-text-dim)',
+                    display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                  }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: m.color, display: 'inline-block', opacity: on ? 1 : 0.4 }} />
+                  {m.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {mode === 'trend'
-        ? <TrendView metric={metric} hours={hours} useMetric={useMetric} scope={scope} region={researchRegion} buoys={buoys} onOpenMap={onOpenMap} />
-        : <MatrixView metric={metric} hours={hours} buoys={buoys} />}
+        ? <TrendStack metrics={enabledMetrics} hours={hours} useMetric={useMetric} scope={scope}
+            region={researchRegion} buoys={buoys} onOpenMap={onOpenMap} isNarrow={isNarrow} onHide={toggleMetric} />
+        : <MatrixView metric={matrixMetric} hours={hours} buoys={buoys} />}
     </div>
   )
 }
 
-function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }) {
+function TrendStack({ metrics, hours, useMetric, scope, region, buoys, onOpenMap, isNarrow, onHide }) {
+  // Region analysis needs the lasso, which is desktop-only.
+  if (scope === 'region' && isNarrow) {
+    return (
+      <div className="ops-section">
+        <div className="chart-container">
+          <div className="loading-veil" style={{ height: 170, flexDirection: 'column', gap: '0.5rem', textAlign: 'center', padding: '1rem' }}>
+            <div style={{ color: 'var(--color-text-bright)' }}>Region analysis is desktop-only</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>
+              Drawing a region requires a larger screen. Switch to <b style={{ color: 'var(--color-amber)' }}>Network</b> here, or open this on a desktop to analyze a drawn area.
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const hasPolygon = (region?.points?.length || 0) >= 3
+  if (scope === 'region' && !hasPolygon) {
+    return (
+      <div className="ops-section">
+        <div className="chart-container">
+          <div className="loading-veil" style={{ height: 170, flexDirection: 'column', gap: '0.75rem' }}>
+            <div>No region drawn yet.</div>
+            <button className="btn btn-primary" onClick={onOpenMap}>Go to Map → lasso a region</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (metrics.length === 0) {
+    return (
+      <div className="ops-section">
+        <div className="chart-container">
+          <div className="loading-veil" style={{ height: 120 }}>Enable a metric above to see its trend.</div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {metrics.map((m) => (
+        <TrendRow key={m.key} metric={m} hours={hours} useMetric={useMetric}
+          scope={scope} region={region} buoys={buoys} onHide={() => onHide(m.key)} />
+      ))}
+    </>
+  )
+}
+
+function TrendRow({ metric, hours, useMetric, scope, region, buoys, onHide }) {
   const [points, setPoints] = useState(null)
   const [meta, setMeta] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const hasPolygon = (region?.points?.length || 0) >= 3
-  const noRegion = scope === 'region' && !hasPolygon
-
   // Buoys inside the drawn polygon that report this metric (nearest-centroid first, capped).
   const regionStations = useMemo(() => {
-    if (scope !== 'region' || !hasPolygon) return []
+    if (scope !== 'region' || !(region?.points?.length >= 3)) return []
     const inside = buoys.filter((b) => b.lat != null && b.lon != null
       && b.available?.includes(metric.stream)
       && pointInPolygon(b.lat, b.lon, region.points))
@@ -161,10 +229,9 @@ function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }
       .sort((a, b) => haversineKm(cLat, cLon, a.lat, a.lon) - haversineKm(cLat, cLon, b.lat, b.lon))
       .slice(0, 80)
       .map((b) => b.id)
-  }, [scope, hasPolygon, region, buoys, metric.stream])
+  }, [scope, region, buoys, metric.stream])
 
   useEffect(() => {
-    if (noRegion) { setPoints(null); setMeta(null); return }
     if (scope === 'region' && regionStations.length === 0) {
       setPoints([]); setMeta({ stationCount: 0, contributing: 0 }); return
     }
@@ -190,64 +257,44 @@ function TrendView({ metric, hours, useMetric, scope, region, buoys, onOpenMap }
 
   const ulabel = unitLabel(metric.unit, useMetric)
   const peakCount = data.reduce((m, d) => Math.max(m, d.count), 0)
-
-  const title = scope === 'region'
-    ? `Region ${metric.label} — ${meta?.contributing ?? meta?.stationCount ?? '…'} buoys in selection (${hours}h)`
-    : `Network ${metric.label} — mean & min/max band (${hours}h)`
-
-  if (noRegion) {
-    return (
-      <div className="ops-section">
-        <div className="chart-container">
-          <div className="loading-veil" style={{ height: 200, flexDirection: 'column', gap: '0.75rem' }}>
-            <div>No region drawn yet.</div>
-            <button className="btn btn-primary" onClick={onOpenMap}>Go to Map → lasso a region</button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const color = metric.color || '#3b82f6'
+  const countLabel = scope === 'region'
+    ? `${meta?.contributing ?? meta?.stationCount ?? '…'} buoys in selection`
+    : `up to ${peakCount} buoys/hr`
 
   return (
     <div className="ops-section">
-      <div className="ops-section-title">{title}</div>
+      <div className="ops-section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: color, marginRight: 6 }} />
+          {metric.label} <span style={{ color: 'var(--color-text-dim)' }}>· {countLabel}</span>
+        </span>
+        <button onClick={onHide} title="Hide this metric"
+          style={{ background: 'none', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1 }}>✕</button>
+      </div>
       <div className="chart-container">
-        {loading && <div className="loading-veil" style={{ height: 240 }}>Loading…</div>}
-        {error && <div className="loading-veil" style={{ height: 240, color: 'var(--color-error)' }}>{error}</div>}
-        {!loading && !error && data.length === 0 && (
-          <div className="loading-veil" style={{ height: 240 }}>No data in this window yet</div>
-        )}
+        {loading && <div className="loading-veil" style={{ height: 180 }}>Loading…</div>}
+        {error && <div className="loading-veil" style={{ height: 180, color: 'var(--color-error)' }}>{error}</div>}
+        {!loading && !error && data.length === 0 && <div className="loading-veil" style={{ height: 180 }}>No data in this window</div>}
         {!loading && !error && data.length > 0 && (
-          <>
-            <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
-                <XAxis
-                  dataKey="ts" tickFormatter={fmtTs}
-                  tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
-                  tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={40}
-                />
-                <YAxis
-                  tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
-                  tickLine={false} axisLine={false} width={40}
-                  label={{ value: ulabel, angle: -90, position: 'insideLeft', fontSize: 9, fill: 'var(--color-text-dim)' }}
-                />
-                <Tooltip
-                  contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.6875rem', fontFamily: 'var(--font-mono)' }}
-                  labelFormatter={fmtTs}
-                  formatter={(val, name) => {
-                    if (name === 'band') return [`${val[0]?.toFixed(1)}–${val[1]?.toFixed(1)} ${ulabel}`, 'min–max']
-                    return [`${val?.toFixed(1)} ${ulabel}`, 'mean']
-                  }}
-                />
-                <Area dataKey="band" stroke="none" fill="#3b82f6" fillOpacity={0.15} isAnimationActive={false} />
-                <Line dataKey="mean" stroke="#3b82f6" strokeWidth={1.75} dot={false} isAnimationActive={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)', marginTop: '0.5rem' }}>
-              Up to {peakCount} buoys per hour · band shows the spread
-              {scope === 'region' && meta?.capped ? ` · nearest ${meta.stationCount} of ${meta.requested} reporting buoys` : ''}
-            </div>
-          </>
+          <ResponsiveContainer width="100%" height={200}>
+            <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+              <XAxis dataKey="ts" tickFormatter={fmtTs}
+                tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
+                tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={40} />
+              <YAxis tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
+                tickLine={false} axisLine={false} width={40}
+                label={{ value: ulabel, angle: -90, position: 'insideLeft', fontSize: 9, fill: 'var(--color-text-dim)' }} />
+              <Tooltip
+                contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.6875rem', fontFamily: 'var(--font-mono)' }}
+                labelFormatter={fmtTs}
+                formatter={(val, name) => name === 'band'
+                  ? [`${val[0]?.toFixed(1)}–${val[1]?.toFixed(1)} ${ulabel}`, 'min–max']
+                  : [`${val?.toFixed(1)} ${ulabel}`, 'mean']} />
+              <Area dataKey="band" stroke="none" fill={color} fillOpacity={0.15} isAnimationActive={false} />
+              <Line dataKey="mean" stroke={color} strokeWidth={1.75} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
         )}
       </div>
     </div>
