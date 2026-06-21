@@ -127,6 +127,9 @@ All temperatures in °C, wind in m/s, wave heights in m, pressure in hPa. The fr
 | GET | `/api/research/trend` | Network-wide hourly mean + min/max band (`?stream=spec&field=waveHeight&hours=120`) |
 | GET | `/api/research/trend_stations` | Regional trend for an explicit station list (`?stations=41008,44013&...`) |
 | GET | `/api/research/correlate` | Pairwise correlation matrix across selected buoys (`?stations=...`) |
+| GET | `/api/research/teleconnections` | Rank every buoy by correlation to a reference (`?ref=41008&stream=...`) |
+| GET | `/api/research/propagation` | Upstream leaders + lead/lag forecast for a target (`?target=46026&stream=...`) |
+| GET | `/api/research/anomalies` | Buoys farthest from the network/region norm now (`?stream=...&scope=network`) |
 
 Example:
 ```bash

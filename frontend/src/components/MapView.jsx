@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import { thermalColor } from '../thermal'
+import { corrColor, corrGradient } from '../correlation'
 import { pointInPolygon } from '../geo'
 import { useIsNarrow } from '../hooks'
 import FilterRail from './FilterRail'
+
+// Active correlation overlay (module-scoped so the cluster icon function, which
+// is registered once at map init, can read the current value). null = off.
+let _overlay = null
 
 // Leaflet and leaflet.markercluster are loaded from CDN via synchronous <script>
 // tags in index.html — they run before this ES-module bundle, so window.L is
@@ -25,10 +30,12 @@ function isRecent(buoy) {
   }
 }
 
-function createMarkerIcon(color, size = 10) {
+function createMarkerIcon(color, size = 10, ring = false) {
+  const border = ring ? '2.5px solid #fff' : '1.5px solid rgba(255,255,255,0.35)'
+  const glow = ring ? 'box-shadow:0 0 6px 2px rgba(255,255,255,0.55);' : ''
   return L.divIcon({
     className: '',
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:1.5px solid rgba(255,255,255,0.35);"></div>`,
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${border};${glow}"></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   })
@@ -36,11 +43,18 @@ function createMarkerIcon(color, size = 10) {
 
 function createClusterIcon(cluster) {
   const childMarkers = cluster.getAllChildMarkers()
-  const temps = childMarkers
-    .map((m) => m.options._buoyData?.latest?.waterTempC)
-    .filter((t) => t != null)
-  const mean = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null
-  const color = thermalColor(mean)
+  let color
+  if (_overlay) {
+    const rs = childMarkers.map((m) => _overlay.byId[m.options._buoyData?.id]).filter((r) => r != null)
+    const mean = rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null
+    color = corrColor(mean)
+  } else {
+    const temps = childMarkers
+      .map((m) => m.options._buoyData?.latest?.waterTempC)
+      .filter((t) => t != null)
+    const mean = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null
+    color = thermalColor(mean)
+  }
   const count = cluster.getChildCount()
   const size = count < 10 ? 30 : count < 50 ? 36 : 42
   return L.divIcon({
@@ -67,12 +81,13 @@ function applyFilters(buoys, filters) {
   })
 }
 
-export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, onNearbyRequest, researchRegion, onRegionChange, onOpenResearch }) {
+export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, onNearbyRequest, researchRegion, onRegionChange, onOpenResearch, correlationOverlay, onExitOverlay, autoLocate, propagationOverlay, onShowPropagationMap, onOpenPropagation }) {
   const mapRef = useRef(null)
   const mapInstanceRef = useRef(null)
   const clusterGroupRef = useRef(null)
   const markersRef = useRef({})
   const regionLayerRef = useRef(null)
+  const propagationLayerRef = useRef(null)
   const [filters, setFilters] = useState({ text: '', streams: [], reportingOnly: false })
   const [drawing, setDrawing] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false) // mobile drawer toggle
@@ -106,6 +121,20 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     mapInstanceRef.current = map
     clusterGroupRef.current = clusterGroup
 
+    // Center near the user's location if available (secure context only — works
+    // over the Cloudflare tunnel / localhost). Falls back to the default view.
+    if (autoLocate && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 6)
+          }
+        },
+        () => {},
+        { timeout: 8000, maximumAge: 600000 },
+      )
+    }
+
     return () => {
       map.remove()
       mapInstanceRef.current = null
@@ -128,25 +157,68 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
       }
     })
 
-    // Add/update markers
+    // Add/update markers. When a correlation overlay is active, color by r and
+    // ring the reference buoy; otherwise color by water temperature.
+    const ov = correlationOverlay
+    const prop = propagationOverlay
     visible.forEach((buoy) => {
       if (buoy.lat == null || buoy.lon == null) return
-      const color = thermalColor(buoy.latest?.waterTempC)
+      const isRef = ov && buoy.id === ov.refId
+      const ringed = isRef || (prop && buoy.id === prop.targetId)
+      const color = ov
+        ? (isRef ? '#ffffff' : corrColor(ov.byId[buoy.id]))
+        : thermalColor(buoy.latest?.waterTempC)
+      const icon = createMarkerIcon(color, ringed ? 14 : 10, ringed)
 
       if (!markersRef.current[buoy.id]) {
-        const marker = L.marker([buoy.lat, buoy.lon], {
-          icon: createMarkerIcon(color),
-          _buoyData: buoy,
-        })
+        const marker = L.marker([buoy.lat, buoy.lon], { icon, _buoyData: buoy })
         marker.on('click', () => onSelectBuoy(buoy))
         markersRef.current[buoy.id] = marker
         clusterGroup.addLayer(marker)
       } else {
         markersRef.current[buoy.id].options._buoyData = buoy
-        markersRef.current[buoy.id].setIcon(createMarkerIcon(color))
+        markersRef.current[buoy.id].setIcon(icon)
       }
     })
-  }, [buoys, filters])
+  }, [buoys, filters, correlationOverlay, propagationOverlay])
+
+  // Keep the module-scoped overlay in sync and recolor existing clusters.
+  useEffect(() => {
+    _overlay = correlationOverlay || null
+    const cg = clusterGroupRef.current
+    if (cg && cg.refreshClusters) cg.refreshClusters()
+  }, [correlationOverlay])
+
+  // Draw propagation arrows (leader → target) when that overlay is active.
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map) return
+    if (!propagationLayerRef.current) {
+      propagationLayerRef.current = L.layerGroup().addTo(map)
+    }
+    const layer = propagationLayerRef.current
+    layer.clearLayers()
+    const prop = propagationOverlay
+    if (prop && prop.target && prop.target.lat != null) {
+      const t = [prop.target.lat, prop.target.lon]
+      prop.leaders.forEach((ldr) => {
+        if (ldr.lat == null || ldr.lon == null) return
+        const a = [ldr.lat, ldr.lon]
+        const color = corrColor(ldr.r)
+        const weight = 1.5 + 3 * Math.min(1, Math.abs(ldr.r))
+        L.polyline([a, t], { color, weight, opacity: 0.85 }).addTo(layer)
+        const mid = [a[0] + (t[0] - a[0]) * 0.62, a[1] + (t[1] - a[1]) * 0.62]
+        L.marker(mid, {
+          interactive: false,
+          icon: L.divIcon({
+            className: '',
+            html: `<div style="transform:translate(-50%,-50%);background:rgba(8,19,24,0.92);border:1px solid ${color};border-radius:8px;padding:0 4px;font-family:var(--font-mono);font-size:10px;color:#e8f4f8;white-space:nowrap;">+${ldr.lagHours}h</div>`,
+            iconSize: [0, 0],
+          }),
+        }).addTo(layer)
+      })
+    }
+  }, [propagationOverlay])
 
   // Fly to selected buoy
   useEffect(() => {
@@ -233,6 +305,39 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
     <div style={{ position: 'relative', height: '100%' }}>
       <div ref={mapRef} style={{ position: 'absolute', inset: 0, cursor: drawing ? 'crosshair' : '' }} />
 
+      {/* Correlation overlay banner + legend */}
+      {correlationOverlay && (
+        <div style={{ position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)', zIndex: 600, width: 280, maxWidth: 'calc(100% - 1.5rem)', background: 'rgba(13,33,41,0.95)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
+            <div style={{ fontSize: '0.6875rem', color: 'var(--color-text)' }}>
+              Correlation vs <b className="mono" style={{ color: 'var(--color-text-bright)' }}>{correlationOverlay.refName || correlationOverlay.refId}</b>
+              <div style={{ color: 'var(--color-text-dim)' }}>{correlationOverlay.label}</div>
+            </div>
+            <button className="btn" style={{ padding: '0.2rem 0.55rem', flex: 'none' }} onClick={onExitOverlay}>Exit</button>
+          </div>
+          <div style={{ height: 8, borderRadius: 4, background: corrGradient(), marginTop: '0.5rem' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.625rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-dim)', marginTop: '0.2rem' }}>
+            <span>−1 inverse</span><span>0</span><span>+1 together</span>
+          </div>
+        </div>
+      )}
+
+      {/* Propagation overlay banner */}
+      {propagationOverlay && (
+        <div style={{ position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)', zIndex: 600, width: 300, maxWidth: 'calc(100% - 1.5rem)', background: 'rgba(13,33,41,0.95)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
+            <div style={{ fontSize: '0.6875rem', color: 'var(--color-text)' }}>
+              Propagation → <b className="mono" style={{ color: 'var(--color-text-bright)' }}>{propagationOverlay.targetName || propagationOverlay.targetId}</b>
+              <div style={{ color: 'var(--color-text-dim)' }}>{propagationOverlay.label} · arrows from upstream leaders</div>
+            </div>
+            <button className="btn" style={{ padding: '0.2rem 0.55rem', flex: 'none' }} onClick={onExitOverlay}>Exit</button>
+          </div>
+          <div style={{ fontSize: '0.625rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)', marginTop: '0.4rem' }}>
+            line color = correlation · label = lead time to target
+          </div>
+        </div>
+      )}
+
       {/* Mobile-only toggle for the controls drawer. Hidden while a buoy detail
           is open, since that panel goes full-screen on mobile. */}
       {!selectedBuoy && (
@@ -292,6 +397,8 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
             useMetric={useMetric}
             onClose={() => onSelectBuoy(null)}
             onNearbyRequest={onNearbyRequest}
+            onShowPropagationMap={onShowPropagationMap}
+            onOpenPropagation={onOpenPropagation}
           />
         </Suspense>
       )}

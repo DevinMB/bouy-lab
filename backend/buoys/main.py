@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -6,8 +7,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from buoys.config import CFG
-from buoys.couch import CouchClient, get_couch_client
-from buoys.cache import TTLCache, snapshot_cache
+from buoys.couch import CouchClient
+from buoys.cache import TTLCache
 from buoys import service
 
 logging.basicConfig(
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
         await _couch.ensure_db_and_views()
         log.info("CouchDB views ensured")
     except Exception as e:
-        log.warning("Could not ensure CouchDB views on startup: %s", e)
+        log.warning("Could not ensure CouchDB views on startup: %r", e)
 
     yield
 
@@ -70,15 +71,24 @@ def _get_cache() -> TTLCache:
 
 @app.get("/api/health")
 async def health():
+    """Fast liveness check. Always returns 200 if the process is up so a CouchDB
+    outage doesn't mark the container unhealthy (which would block the frontend).
+    CouchDB reachability is probed with a short timeout and reported, not required."""
     couch = _get_couch()
     cache = _get_cache()
+    couch_ok = False
     try:
-        ok = await couch.health_check()
-        snapshot = await service.get_snapshot(couch, cache, located_only=False)
-        return {"status": "ok", "couchdb": ok, "stationCount": len(snapshot), "ts": int(time.time())}
+        couch_ok = await asyncio.wait_for(couch.health_check(), timeout=2.0)
     except Exception as e:
-        log.error("Health check error: %s", e)
-        return {"status": "degraded", "couchdb": False, "stationCount": 0, "ts": int(time.time())}
+        log.warning("CouchDB health probe failed: %r", e)
+    cached = cache.get("snapshot")
+    count = len(cached) if cached is not None else 0
+    return {
+        "status": "ok" if couch_ok else "degraded",
+        "couchdb": couch_ok,
+        "stationCount": count,
+        "ts": int(time.time()),
+    }
 
 
 @app.get("/api/buoys")
@@ -183,3 +193,48 @@ async def research_correlate(
     if len(station_ids) < 2:
         raise HTTPException(status_code=422, detail="Provide at least 2 station IDs")
     return await service.get_correlation(couch, stream, field, station_ids, hours)
+
+
+@app.get("/api/research/teleconnections")
+async def research_teleconnections(
+    ref: str = Query(..., description="Reference station ID"),
+    stream: str = Query(...),
+    field: str = Query(...),
+    hours: int = Query(default=168, ge=6, le=720),
+):
+    couch = _get_couch()
+    cache = _get_cache()
+    return await service.get_teleconnections(couch, cache, ref.strip(), stream, field, hours)
+
+
+@app.get("/api/research/propagation")
+async def research_propagation(
+    target: str = Query(..., description="Target station ID"),
+    stream: str = Query(...),
+    field: str = Query(...),
+    hours: int = Query(default=336, ge=24, le=720),
+    max_lag_hours: int = Query(default=48, ge=6, le=120),
+    top_n: int = Query(default=8, ge=1, le=20),
+    max_dist_km: float = Query(default=4000, gt=0, le=20000),
+):
+    couch = _get_couch()
+    cache = _get_cache()
+    return await service.get_propagation(
+        couch, cache, target.strip(), stream, field, hours,
+        max_lag_hours=max_lag_hours, top_n=top_n, max_dist_km=max_dist_km,
+    )
+
+
+@app.get("/api/research/anomalies")
+async def research_anomalies(
+    stream: str = Query(...),
+    field: str = Query(...),
+    scope: str = Query(default="network"),
+    stations: str = Query(default=""),
+    limit: int = Query(default=25, ge=1, le=100),
+):
+    couch = _get_couch()
+    cache = _get_cache()
+    station_ids = [s.strip() for s in stations.split(",") if s.strip()]
+    return await service.get_anomalies(couch, cache, stream, field, scope, station_ids, limit)
+W@ffles02

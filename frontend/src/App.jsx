@@ -25,8 +25,13 @@ export default function App() {
   const [nearbyOrigin, setNearbyOrigin] = useState(null)
   const [researchRegion, setResearchRegion] = useState(null)
   const [researchScope, setResearchScope] = useState('network')
+  const [correlationOverlay, setCorrelationOverlay] = useState(null)
+  const [propagationOverlay, setPropagationOverlay] = useState(null)
+  const [propagationRequest, setPropagationRequest] = useState(null)
   const statsLoadedRef = useRef(false)
   const deepLinkId = useRef(buoyIdFromPath())
+  // Auto-center on the user's location at load, unless they opened a shared buoy link.
+  const autoLocate = useRef(!buoyIdFromPath())
 
   const loadBuoys = async () => {
     try {
@@ -93,6 +98,33 @@ export default function App() {
     setTab('map')
   }
 
+  const handleShowCorrelationMap = (payload) => {
+    const byId = {}
+    ;(payload.results || []).forEach((r) => { byId[r.id] = r.r })
+    setPropagationOverlay(null) // overlays are mutually exclusive
+    setCorrelationOverlay({ refId: payload.ref, refName: payload.refName, label: payload.label, byId })
+    setSelectedBuoy(null)
+    setTab('map')
+  }
+
+  const handleShowPropagationMap = (payload) => {
+    setCorrelationOverlay(null) // overlays are mutually exclusive
+    setPropagationOverlay(payload)
+    setSelectedBuoy(null)
+    setTab('map')
+  }
+
+  const exitOverlays = () => {
+    setCorrelationOverlay(null)
+    setPropagationOverlay(null)
+  }
+
+  // Open the Research → Propagation page for a buoy (preselected + auto-computed).
+  const handleOpenPropagation = (req) => {
+    setPropagationRequest(req)
+    setTab('research')
+  }
+
   const reporting = buoys.filter((b) => b.latest?.waterTempC != null).length
 
   return (
@@ -142,6 +174,12 @@ export default function App() {
               researchRegion={researchRegion}
               onRegionChange={setResearchRegion}
               onOpenResearch={() => { setResearchScope('region'); setTab('research') }}
+              correlationOverlay={correlationOverlay}
+              propagationOverlay={propagationOverlay}
+              onExitOverlay={exitOverlays}
+              onShowPropagationMap={handleShowPropagationMap}
+              onOpenPropagation={handleOpenPropagation}
+              autoLocate={autoLocate.current}
             />
           </Suspense>
         </div>
@@ -165,7 +203,7 @@ export default function App() {
 
         {tab === 'research' && (
           <Suspense fallback={<div className="loading-veil">Loading research…</div>}>
-            <Research buoys={buoys} useMetric={useMetric} researchRegion={researchRegion} scope={researchScope} onScopeChange={setResearchScope} onOpenMap={() => setTab('map')} />
+            <Research buoys={buoys} useMetric={useMetric} researchRegion={researchRegion} scope={researchScope} onScopeChange={setResearchScope} onOpenMap={() => setTab('map')} onSelectBuoy={handleSelectBuoy} onShowCorrelationMap={handleShowCorrelationMap} onShowPropagationMap={handleShowPropagationMap} propagationRequest={propagationRequest} onConsumePropagationRequest={() => setPropagationRequest(null)} />
           </Suspense>
         )}
       </div>

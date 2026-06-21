@@ -42,6 +42,3 @@ class TTLCache:
     def invalidate(self, key: str) -> None:
         with self._lock:
             self._store.pop(key, None)
-
-
-snapshot_cache = TTLCache(ttl_seconds=60)

@@ -40,6 +40,20 @@ export async function fetchResearchTrendStations(stream, field, stations, hours 
   return apiFetch(`/research/trend_stations?stream=${stream}&field=${field}&stations=${ids}&hours=${hours}`)
 }
 
+export async function fetchTeleconnections(ref, stream, field, hours = 168) {
+  return apiFetch(`/research/teleconnections?ref=${encodeURIComponent(ref)}&stream=${stream}&field=${field}&hours=${hours}`)
+}
+
+export async function fetchAnomalies(stream, field, scope = 'network', stations = [], limit = 25) {
+  const ids = encodeURIComponent(stations.join(','))
+  return apiFetch(`/research/anomalies?stream=${stream}&field=${field}&scope=${scope}&stations=${ids}&limit=${limit}`)
+}
+
+export async function fetchPropagation(target, stream, field, hours = 336, maxLagHours = 48, opts = {}) {
+  const { topN = 8, maxDistKm = 4000 } = opts
+  return apiFetch(`/research/propagation?target=${encodeURIComponent(target)}&stream=${stream}&field=${field}&hours=${hours}&max_lag_hours=${maxLagHours}&top_n=${topN}&max_dist_km=${maxDistKm}`)
+}
+
 export async function fetchHealth() {
   return apiFetch('/health')
 }

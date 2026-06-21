@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { fetchBuoyDetail, fetchSeries, units as U } from '../api'
+import { fetchBuoyDetail, fetchSeries, fetchPropagation, units as U } from '../api'
 import { thermalColor, onThermalText } from '../thermal'
 import Sparkline from './Sparkline'
 
@@ -10,13 +10,15 @@ const STREAM_FIELDS = {
   srad: { field: 'solarRadiation', label: 'Solar Rad', unit: '' },
 }
 
-// Series come from the API in SI units (°C, m). Convert for display.
+// Series come from the API in SI units (°C, m, m/s, hPa). Convert for display.
 function convertSeries(v, unit, useMetric) {
   if (v == null) return null
   if (useMetric) return v
   switch (unit) {
     case 'temp': return v * 9 / 5 + 32
     case 'wave': return v * 3.28084
+    case 'wind': return v * 2.23694
+    case 'pressure': return v * 0.02953
     default: return v
   }
 }
@@ -25,8 +27,23 @@ function seriesUnitLabel(unit, useMetric) {
   switch (unit) {
     case 'temp': return useMetric ? '°C' : '°F'
     case 'wave': return useMetric ? 'm' : 'ft'
+    case 'wind': return useMetric ? 'm/s' : 'mph'
+    case 'pressure': return useMetric ? 'hPa' : 'inHg'
     default: return ''
   }
+}
+
+// Metrics that make sense to forecast via upstream propagation. The default is
+// remembered in localStorage so changing it in one buoy sets it for all.
+const FORECAST_METRICS = [
+  { id: 'waveHeight', field: 'waveHeight', label: 'Wave Height', unit: 'wave', streams: ['standard', 'spec'] },
+  { id: 'pressure', field: 'pressure', label: 'Pressure', unit: 'pressure', streams: ['standard'] },
+  { id: 'windSpeed', field: 'windSpeed', label: 'Wind Speed', unit: 'wind', streams: ['standard'] },
+  { id: 'waterTemperature', field: 'waterTemperature', label: 'Water Temp', unit: 'temp', streams: ['standard', 'ocean'] },
+]
+
+function loadForecastMetric() {
+  try { return localStorage.getItem('forecastMetric') || 'waveHeight' } catch { return 'waveHeight' }
 }
 
 // Format an ISO timestamp into a local time string + relative age.
@@ -46,10 +63,35 @@ function formatObserved(iso) {
   return { local, ago, stale: ageMin > 24 * 60 }
 }
 
-export default function DetailPanel({ buoy, useMetric, onClose, onNearbyRequest }) {
+export default function DetailPanel({ buoy, useMetric, onClose, onNearbyRequest, onShowPropagationMap, onOpenPropagation }) {
   const [detail, setDetail] = useState(null)
   const [seriesData, setSeriesData] = useState({})
   const [loadingSeries, setLoadingSeries] = useState(false)
+  const [forecast, setForecast] = useState(null)
+  const [forecastLoading, setForecastLoading] = useState(false)
+  const [forecastMetricId, setForecastMetricId] = useState(loadForecastMetric)
+
+  const changeForecastMetric = (id) => {
+    setForecastMetricId(id)
+    try { localStorage.setItem('forecastMetric', id) } catch { /* ignore */ }
+  }
+
+  // The chosen forecast metric and the stream this buoy reports it on (if any).
+  const fm = FORECAST_METRICS.find((m) => m.id === forecastMetricId) || FORECAST_METRICS[0]
+  const forecastable = FORECAST_METRICS.some((m) => m.streams.some((s) => buoy?.available?.includes(s)))
+  const forecastStream = fm.streams.find((s) => buoy?.available?.includes(s)) || null
+
+  useEffect(() => {
+    setForecast(null)
+    if (!buoy || !forecastStream) return
+    let alive = true
+    setForecastLoading(true)
+    fetchPropagation(buoy.id, forecastStream, fm.field, 336, 36, { topN: 3, maxDistKm: 3000 })
+      .then((r) => { if (alive) setForecast(r) })
+      .catch(() => { if (alive) setForecast(null) })
+      .finally(() => { if (alive) setForecastLoading(false) })
+    return () => { alive = false }
+  }, [buoy?.id, forecastStream, fm.field])
   const [copied, setCopied] = useState(false)
 
   const copyLink = () => {
@@ -180,6 +222,70 @@ export default function DetailPanel({ buoy, useMetric, onClose, onNearbyRequest 
           ))}
         </div>
       </div>
+
+      {/* Incoming — swell/storm propagation forecast (metric is a saved default) */}
+      {forecastable && (
+        <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid var(--color-border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.625rem', color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Incoming forecast</span>
+            <select
+              value={forecastMetricId}
+              onChange={(e) => changeForecastMetric(e.target.value)}
+              title="Default forecast metric (remembered)"
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-2)', borderRadius: 6, color: 'var(--color-text-bright)', fontSize: '0.6875rem', padding: '0.2rem 0.45rem', fontFamily: 'var(--font-body)', outline: 'none', cursor: 'pointer' }}
+            >
+              {FORECAST_METRICS.map((m) => (
+                <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text-bright)' }}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {!forecastStream && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>This buoy doesn’t report {fm.label.toLowerCase()}. Pick another metric above.</div>
+          )}
+          {forecastStream && forecastLoading && <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>Computing forecast…</div>}
+          {forecastStream && !forecastLoading && (!forecast || !forecast.leaders?.length) && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>No strong upstream signal nearby.</div>
+          )}
+          {forecastStream && !forecastLoading && forecast && forecast.leaders?.length > 0 && (() => {
+            const top = forecast.leaders[0]
+            const fc = forecast.forecast || []
+            const ulabel = seriesUnitLabel(fm.unit, useMetric)
+            const data = fc.map((p) => ({ ts: p.ts, value: convertSeries(p.value, fm.unit, useMetric) }))
+            const peak = data.length ? Math.max(...data.map((d) => d.value)) : null
+            const payload = {
+              targetId: forecast.target, targetName: forecast.targetName, label: fm.label,
+              target: { lat: buoy.lat, lon: buoy.lon },
+              leaders: forecast.leaders.map((L) => ({ id: L.id, lat: L.lat, lon: L.lon, lagHours: L.lagHours, r: L.r })),
+            }
+            return (
+              <>
+                <div className="mono" style={{ fontSize: '0.8125rem', color: 'var(--color-text-bright)' }}>
+                  {top.id} <span style={{ color: 'var(--color-text-dim)' }}>{top.name}</span>
+                </div>
+                <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>
+                  leads by ~{top.lagHours}h{peak != null ? ` · forecast peak ${peak.toFixed(1)} ${ulabel}` : ''}
+                </div>
+                {data.length > 0 && <Sparkline data={data} label="Predicted" color="#3b82f6" unitLabel={ulabel} />}
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  {onShowPropagationMap && (
+                    <button className="btn" style={{ flex: 1, justifyContent: 'center' }}
+                      onClick={() => onShowPropagationMap(payload)}>
+                      Show on map
+                    </button>
+                  )}
+                  {onOpenPropagation && (
+                    <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}
+                      onClick={() => onOpenPropagation({ id: buoy.id, metricKey: `${forecastStream}:${fm.field}` })}>
+                      Full forecast →
+                    </button>
+                  )}
+                </div>
+              </>
+            )
+          })()}
+        </div>
+      )}
 
       {/* Available streams */}
       {buoy.available?.length > 0 && (

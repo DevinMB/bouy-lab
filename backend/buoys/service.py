@@ -255,6 +255,242 @@ async def get_correlation(
     }
 
 
+async def _series_map(
+    couch: CouchClient, ids: list, stream: str, field: str, hours: int, sem_limit: int = 24
+) -> dict:
+    """Concurrently fetch + bucket the series for many stations: {id: {bucket: value}}.
+
+    Bounded by a semaphore since callers (teleconnections) may scan hundreds of buoys.
+    """
+    limit = min(1000, max(48, hours + 12))
+    sem = asyncio.Semaphore(sem_limit)
+
+    async def _one(sid: str):
+        async with sem:
+            raw = await couch.get_series(sid, stream, field, limit)
+            return sid, _bucketed_series(raw)
+
+    pairs = await asyncio.gather(*[_one(sid) for sid in ids]) if ids else []
+    return dict(pairs)
+
+
+def _leadlag(a: dict, b: dict, max_lag_hours: int):
+    """Lead/lag correlation between two hourly series.
+
+    Positive lag L ⇒ `a` leads `b` by L hours (a(t) predicts b(t+L)). Returns
+    (best_lag, best_r, best_overlap, curve) where curve = [{lagHours, r}].
+    """
+    best_lag, best_r, best_overlap = 0, None, 0
+    curve = []
+    for lag in range(-max_lag_hours, max_lag_hours + 1):
+        shift = lag * 3600
+        shifted = {k - shift: v for k, v in b.items()}
+        overlap = len(a.keys() & shifted.keys())
+        r = _pearson(a, shifted) if overlap >= 3 else None
+        curve.append({"lagHours": lag, "r": r})
+        if r is not None and (best_r is None or r > best_r):
+            best_lag, best_r, best_overlap = lag, r, overlap
+    return best_lag, best_r, best_overlap, curve
+
+
+def _build_forecast(series: dict, target_series: dict, leaders: list, max_lag_hours: int):
+    """Predict the target's near future by blending each leader's recent series,
+    shifted forward by its lead time and weighted by correlation. Returns
+    (forecast, observed) where each is a list of {ts, value, ...}."""
+    if not target_series:
+        return [], []
+    now_bucket = (int(time.time()) // 3600) * 3600
+    t_vals = list(target_series.values())
+    mu_t = sum(t_vals) / len(t_vals)
+
+    lstats = {}
+    for ldr in leaders:
+        s = series.get(ldr["id"], {})
+        if s:
+            lstats[ldr["id"]] = (s, sum(s.values()) / len(s.values()))
+
+    cutoff = now_bucket - 2 * max_lag_hours * 3600
+    observed = [{"ts": k, "value": round(v, 3)} for k, v in sorted(target_series.items()) if k >= cutoff]
+
+    forecast = []
+    for k in range(1, max_lag_hours + 1):
+        future_ts = now_bucket + k * 3600
+        num, den, n = 0.0, 0.0, 0
+        for ldr in leaders:
+            if ldr["lagHours"] < k:
+                continue
+            entry = lstats.get(ldr["id"])
+            if not entry:
+                continue
+            s, mu_l = entry
+            val = s.get(future_ts - ldr["lagHours"] * 3600)
+            if val is None:
+                continue
+            num += ldr["r"] * (val - mu_l)
+            den += ldr["r"]
+            n += 1
+        if n > 0 and den > 0:
+            forecast.append({"ts": future_ts, "value": round(mu_t + num / den, 3), "nContributors": n})
+    return forecast, observed
+
+
+async def get_propagation(
+    couch: CouchClient, cache: TTLCache, target_id: str, stream: str, field: str, hours: int,
+    max_lag_hours: int = 48, top_n: int = 8, max_dist_km: float = 4000,
+    min_r: float = 0.5, min_overlap: int = 12,
+) -> dict:
+    """Find a target buoy's strongest upstream leaders and forecast its near future."""
+    key = f"prop:{target_id}:{stream}:{field}:{hours}:{max_lag_hours}:{top_n}:{int(max_dist_km)}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    snapshot = await get_snapshot(couch, cache, located_only=True)
+    meta = {s["id"]: s for s in snapshot}
+    tgt = meta.get(target_id)
+    empty = {
+        "target": target_id, "targetName": meta.get(target_id, {}).get("name", target_id),
+        "stream": stream, "field": field, "hours": hours, "maxLagHours": max_lag_hours,
+        "leaders": [], "forecast": [], "observed": [],
+    }
+    if not tgt or tgt.get("lat") is None:
+        cache.set(key, empty)
+        return empty
+
+    tlat, tlon = tgt["lat"], tgt["lon"]
+    candidates = []
+    for s in snapshot:
+        if s["id"] == target_id or stream not in (s.get("available") or []) or s.get("lat") is None:
+            continue
+        d = haversine_km(tlat, tlon, s["lat"], s["lon"])
+        if d <= max_dist_km:
+            candidates.append((s["id"], d))
+
+    series = await _series_map(couch, [target_id] + [c for c, _ in candidates], stream, field, hours)
+    target_series = series.get(target_id, {})
+
+    leaders = []
+    if target_series:
+        for cid, dist in candidates:
+            cs = series.get(cid, {})
+            if not cs:
+                continue
+            lag, r, overlap, _curve = _leadlag(cs, target_series, max_lag_hours)
+            if lag > 0 and r is not None and r >= min_r and overlap >= min_overlap:
+                m = meta.get(cid, {})
+                leaders.append({
+                    "id": cid, "name": m.get("name", cid), "lat": m.get("lat"), "lon": m.get("lon"),
+                    "lagHours": lag, "r": r, "overlap": overlap,
+                    "distanceKm": round(dist, 1),
+                    "speedKmh": round(dist / lag, 1) if lag else None,
+                })
+    leaders.sort(key=lambda x: x["r"], reverse=True)
+    leaders = leaders[:top_n]
+
+    forecast, observed = _build_forecast(series, target_series, leaders, max_lag_hours)
+    result = {**empty, "leaders": leaders, "forecast": forecast, "observed": observed}
+    cache.set(key, result)
+    return result
+
+
+async def get_teleconnections(
+    couch: CouchClient, cache: TTLCache, ref_id: str, stream: str, field: str,
+    hours: int, min_overlap: int = 12,
+) -> dict:
+    """Rank every located buoy reporting the metric by correlation to a reference buoy."""
+    key = f"teleconn:{ref_id}:{stream}:{field}:{hours}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    snapshot = await get_snapshot(couch, cache, located_only=True)
+    meta = {s["id"]: s for s in snapshot}
+    candidates = [s["id"] for s in snapshot
+                  if stream in (s.get("available") or []) and s["id"] != ref_id]
+
+    ref_series_map = await _series_map(couch, [ref_id], stream, field, hours)
+    ref_series = ref_series_map.get(ref_id, {})
+
+    results = []
+    if ref_series:
+        series = await _series_map(couch, candidates, stream, field, hours)
+        for sid, s in series.items():
+            overlap = len(ref_series.keys() & s.keys())
+            if overlap < min_overlap:
+                continue
+            r = _pearson(ref_series, s)
+            if r is None:
+                continue
+            m = meta.get(sid, {})
+            results.append({
+                "id": sid, "name": m.get("name", sid),
+                "lat": m.get("lat"), "lon": m.get("lon"),
+                "r": r, "overlap": overlap,
+            })
+    results.sort(key=lambda x: x["r"], reverse=True)
+
+    result = {
+        "ref": ref_id, "stream": stream, "field": field, "hours": hours,
+        "refName": meta.get(ref_id, {}).get("name", ref_id),
+        "results": results,
+    }
+    cache.set(key, result)
+    return result
+
+
+async def get_anomalies(
+    couch: CouchClient, cache: TTLCache, stream: str, field: str,
+    scope: str = "network", station_ids: list = None, limit: int = 25,
+) -> dict:
+    """Buoys reading farthest from the current mean for a metric, by z-score."""
+    region_set = set(station_ids or [])
+    key = f"anom:{stream}:{field}:{scope}:{limit}:{','.join(sorted(region_set))}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    docs = await couch.get_all_latest()
+    points = []
+    for doc in docs:
+        sid = doc.get("stationId")
+        if scope == "region" and sid not in region_set:
+            continue
+        values = (doc.get("streams", {}).get(stream, {}) or {}).get("values", {}) or {}
+        val = values.get(field)
+        if val is None:
+            continue
+        points.append((sid, doc.get("name", sid), float(val)))
+
+    n = len(points)
+    if n < 3:
+        result = {"stream": stream, "field": field, "scope": scope, "n": n,
+                  "mean": None, "std": None, "anomalies": []}
+        cache.set(key, result)
+        return result
+
+    vals = [p[2] for p in points]
+    mean = sum(vals) / n
+    std = (sum((v - mean) ** 2 for v in vals) / n) ** 0.5
+
+    anomalies = []
+    if std > 0:
+        for sid, name, val in points:
+            z = (val - mean) / std
+            anomalies.append({
+                "id": sid, "name": name, "value": round(val, 2),
+                "z": round(z, 2), "direction": "high" if z >= 0 else "low",
+            })
+        anomalies.sort(key=lambda x: abs(x["z"]), reverse=True)
+        anomalies = anomalies[:limit]
+
+    result = {
+        "stream": stream, "field": field, "scope": scope, "n": n,
+        "mean": round(mean, 2), "std": round(std, 2), "anomalies": anomalies,
+    }
+    cache.set(key, result)
+    return result
+
+
 async def get_stats(couch: CouchClient, cache: TTLCache) -> dict:
     cached = cache.get("stats")
     if cached is not None:
