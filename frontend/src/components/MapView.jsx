@@ -101,11 +101,9 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
       zoom: 4,
       zoomControl: false,
     })
-    // Bottom-left keeps the zoom buttons clear of the FilterRail (top-left)
-    // and the attribution control (bottom-right).
-    L.control.zoom({ position: 'bottomleft' }).addTo(map)
+    map.attributionControl.setPrefix(false) // drop the Leaflet flag — keep just the data credit
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://carto.com">CARTO</a>',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 19,
     }).addTo(map)
@@ -231,6 +229,13 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
       map.flyTo([selectedBuoy.lat, selectedBuoy.lon], targetZoom, { duration: 1.2 })
     }
   }, [selectedBuoy?.id])
+
+  // Hide the attribution badge while a buoy detail is open.
+  useEffect(() => {
+    const ac = mapInstanceRef.current?.attributionControl
+    const el = ac && ac.getContainer ? ac.getContainer() : null
+    if (el) el.style.display = selectedBuoy ? 'none' : ''
+  }, [selectedBuoy])
 
   // Draw the persistent research-region polygon from shared state.
   useEffect(() => {

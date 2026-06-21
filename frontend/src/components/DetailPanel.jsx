@@ -33,6 +33,17 @@ function seriesUnitLabel(unit, useMetric) {
   }
 }
 
+// Sparkline color: temperature streams use the SST ramp (meaningful); other
+// streams get a fixed bright color, since the thermal ramp renders small wave/
+// solar values as a hard-to-see deep-water blue.
+function sparkColor(unit, firstVal) {
+  switch (unit) {
+    case 'temp': return thermalColor(firstVal)
+    case 'wave': return '#3b82f6'
+    default: return '#eab308'
+  }
+}
+
 // Metrics that make sense to forecast via upstream propagation. The default is
 // remembered in localStorage so changing it in one buoy sets it for all.
 const FORECAST_METRICS = [
@@ -275,7 +286,7 @@ export default function DetailPanel({ buoy, useMetric, onClose, onNearbyRequest,
                     </button>
                   )}
                   {onOpenPropagation && (
-                    <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}
+                    <button className="btn" style={{ flex: 1, justifyContent: 'center' }}
                       onClick={() => onOpenPropagation({ id: buoy.id, metricKey: `${forecastStream}:${fm.field}` })}>
                       Full forecast →
                     </button>
@@ -313,7 +324,7 @@ export default function DetailPanel({ buoy, useMetric, onClose, onNearbyRequest,
                 <Sparkline
                   data={data}
                   label={label}
-                  color={thermalColor(raw[0]?.value)}
+                  color={sparkColor(unit, raw[0]?.value)}
                   unitLabel={seriesUnitLabel(unit, useMetric)}
                 />
               </div>
