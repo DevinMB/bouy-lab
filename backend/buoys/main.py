@@ -237,4 +237,3 @@ async def research_anomalies(
     cache = _get_cache()
     station_ids = [s.strip() for s in stations.split(",") if s.strip()]
     return await service.get_anomalies(couch, cache, stream, field, scope, station_ids, limit)
-W@ffles02
