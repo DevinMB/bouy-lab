@@ -16,6 +16,15 @@ const L = window.L
 
 const DetailPanel = lazy(() => import('./DetailPanel'))
 
+// CARTO raster basemaps require an API key — without it every tile carries an
+// "API key required" watermark. Injected at build time from CARTO_API_KEY in
+// .env (see docker-compose frontend build args). Blank key = unkeyed URL, which
+// still renders, just watermarked.
+const CARTO_KEY = import.meta.env.VITE_CARTO_API_KEY || ''
+const CARTO_TILES =
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' +
+  (CARTO_KEY ? `?key=${encodeURIComponent(CARTO_KEY)}` : '')
+
 const NOW = () => Date.now() / 1000
 const FRESH_SECS = 24 * 3600
 
@@ -102,7 +111,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
       zoomControl: false,
     })
     map.attributionControl.setPrefix(false) // drop the Leaflet flag — keep just the data credit
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer(CARTO_TILES, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 19,

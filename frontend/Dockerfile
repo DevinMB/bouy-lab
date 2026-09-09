@@ -6,6 +6,10 @@ COPY package.json .
 RUN npm install
 
 COPY . .
+
+# CARTO basemap key — Vite inlines VITE_* env vars at build time.
+ARG VITE_CARTO_API_KEY=
+ENV VITE_CARTO_API_KEY=$VITE_CARTO_API_KEY
 RUN npm run build
 
 FROM nginx:alpine
