@@ -1,3 +1,4 @@
+import time
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -251,3 +252,89 @@ async def test_highlights_empty_network(client):
 async def test_highlights_hours_bounds(client):
     assert (await client.get("/api/research/highlights?hours=6")).status_code == 422
     assert (await client.get("/api/research/highlights?hours=720")).status_code == 422
+
+
+# ── /api/research/anomalies filtering ────────────────────────────────────────
+
+def _fresh_latest(sid, streams):
+    """A latest: doc whose overall ts is the newest across its streams."""
+    return {
+        "_id": f"latest:{sid}", "type": "latest", "stationId": sid, "name": sid,
+        "lat": 30.0, "lon": -80.0, "owner": "NDBC", "ttype": "BUOY", "available": [],
+        "ts": max(v["ts"] for v in streams.values()), "streams": streams,
+    }
+
+
+@pytest.mark.asyncio
+async def test_anomalies_drops_sensor_faults(client):
+    """A 999 °C reading must not reach the statistic.
+
+    It would inflate std, and because z = (val - mean) / std that compresses
+    every z-score toward zero -- the fault ranks top while real anomalies are
+    buried. Same SANE_RANGES filter the Trends digest already applies.
+    """
+    now = int(time.time())
+    docs = [_fresh_latest(sid, {"standard": {"ts": now, "values": {"waterTemperature": v}}})
+            for sid, v in [("A1", 20.0), ("A2", 21.0), ("A3", 19.0), ("A4", 20.5)]]
+    docs.append(_fresh_latest("BAD", {"standard": {"ts": now, "values": {"waterTemperature": 999.0}}}))
+    main_module._couch.seed(docs)
+
+    data = (await client.get("/api/research/anomalies?stream=standard&field=waterTemperature")).json()
+    assert data["excludedOutOfRange"] == 1
+    assert "BAD" not in [a["id"] for a in data["anomalies"]]
+    assert data["n"] == 4
+    # 20.125 mean over four plausible readings, not dragged up by the fault.
+    assert 19.0 <= data["mean"] <= 21.0
+    assert data["std"] < 1.5
+
+
+@pytest.mark.asyncio
+async def test_anomalies_drops_stale_readings(client):
+    """A months-old reading does not belong in a *current* network mean."""
+    now = int(time.time())
+    docs = [_fresh_latest(sid, {"standard": {"ts": now, "values": {"waterTemperature": v}}})
+            for sid, v in [("B1", 20.0), ("B2", 21.0), ("B3", 19.0)]]
+    docs.append(_fresh_latest("OLD", {"standard": {"ts": now - 90 * 86400,
+                                                   "values": {"waterTemperature": 2.0}}}))
+    main_module._couch.seed(docs)
+
+    data = (await client.get("/api/research/anomalies?stream=standard&field=waterTemperature")).json()
+    assert "OLD" not in [a["id"] for a in data["anomalies"]]
+    assert data["excludedStale"] >= 1
+    assert data["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_anomalies_staleness_uses_the_streams_own_ts():
+    """The subtle one: freshness is per stream, not per document.
+
+    doc.ts is the newest ts across all streams, so a station with a live
+    standard feed and a long-dead ocean sensor has a fresh doc.ts. Judging on
+    doc.ts would admit the dead ocean reading; judging on the stream's own ts
+    does not.
+    """
+    fake = FakeCouchClient()
+    main_module._couch = fake
+    main_module._cache = TTLCache(ttl_seconds=60)
+    now = int(time.time())
+    fake.seed([
+        _fresh_latest("MIX", {
+            "standard": {"ts": now, "values": {"waterTemperature": 20.0}},
+            "ocean": {"ts": now - 30 * 86400, "values": {"waterTemperature": 5.0}},
+        }),
+        _fresh_latest("C1", {"standard": {"ts": now, "values": {"waterTemperature": 21.0}},
+                             "ocean": {"ts": now, "values": {"waterTemperature": 18.0}}}),
+        _fresh_latest("C2", {"standard": {"ts": now, "values": {"waterTemperature": 19.0}},
+                             "ocean": {"ts": now, "values": {"waterTemperature": 17.0}}}),
+        _fresh_latest("C3", {"standard": {"ts": now, "values": {"waterTemperature": 20.5}},
+                             "ocean": {"ts": now, "values": {"waterTemperature": 17.5}}}),
+    ])
+    async with AsyncClient(transport=ASGITransport(app=main_module.app),
+                           base_url="http://test") as c:
+        ocean = (await c.get("/api/research/anomalies?stream=ocean&field=waterTemperature")).json()
+        assert "MIX" not in [a["id"] for a in ocean["anomalies"]], "dead ocean sensor admitted"
+        assert ocean["excludedStale"] == 1
+        assert ocean["n"] == 3
+        std = (await c.get("/api/research/anomalies?stream=standard&field=waterTemperature")).json()
+        assert "MIX" in [a["id"] for a in std["anomalies"]], "live standard feed wrongly dropped"
+        assert std["n"] == 4

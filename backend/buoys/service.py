@@ -450,21 +450,46 @@ async def get_anomalies(
         return cached
 
     docs = await couch.get_all_latest()
+    lo, hi = SANE_RANGES.get(field, (float("-inf"), float("inf")))
+    fresh_cutoff = time.time() - CFG.FRESH_WINDOW_HOURS * 3600
     points = []
+    stale = 0
+    out_of_range = 0
     for doc in docs:
         sid = doc.get("stationId")
         if scope == "region" and sid not in region_set:
             continue
-        values = (doc.get("streams", {}).get(stream, {}) or {}).get("values", {}) or {}
+        entry = (doc.get("streams") or {}).get(stream) or {}
+        values = entry.get("values") or {}
         val = values.get(field)
         if val is None:
             continue
-        points.append((sid, doc.get("name", sid), float(val)))
+        # A "current" network mean needs current readings. Use the STREAM's ts,
+        # not the doc's: doc.ts is the newest across all streams, so a station
+        # with a live standard feed would otherwise drag a months-stale ocean
+        # reading in alongside it.
+        ts = entry.get("ts")
+        if ts is None or ts < fresh_cutoff:
+            stale += 1
+            continue
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            continue
+        # Sensor faults (999 °C and friends) inflate std, which compresses every
+        # z-score toward zero -- so the faults rank as the top anomalies while
+        # real ones are buried. Same filter the Trends digest already applies
+        # via _window_buckets; applying it here makes the two consistent.
+        if not (lo <= val <= hi):
+            out_of_range += 1
+            continue
+        points.append((sid, doc.get("name", sid), val))
 
     n = len(points)
     if n < 3:
         result = {"stream": stream, "field": field, "scope": scope, "n": n,
-                  "mean": None, "std": None, "anomalies": []}
+                  "mean": None, "std": None, "anomalies": [],
+                  "excludedStale": stale, "excludedOutOfRange": out_of_range}
         cache.set(key, result)
         return result
 
@@ -486,6 +511,8 @@ async def get_anomalies(
     result = {
         "stream": stream, "field": field, "scope": scope, "n": n,
         "mean": round(mean, 2), "std": round(std, 2), "anomalies": anomalies,
+        # Reported so the filtering is auditable rather than invisible.
+        "excludedStale": stale, "excludedOutOfRange": out_of_range,
     }
     cache.set(key, result)
     return result
