@@ -29,6 +29,8 @@ Four Docker services — **you supply Kafka and CouchDB**, this stack connects t
 | `frontend` | React/Vite SPA + nginx (proxies `/api`) |
 | `cloudflared` | Optional Cloudflare Tunnel (profile: `tunnel`) |
 
+Planned: moving the sink and the research computations onto Flink jobs run by MARS. See [docs/flink-migration.md](docs/flink-migration.md).
+
 ## Quick Start
 
 **Prerequisites:** Docker + Compose plugin, an existing Kafka broker, an existing CouchDB instance.
