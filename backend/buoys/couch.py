@@ -290,15 +290,26 @@ class CouchClient:
             # build. Never update=lazy: that serves stale AND starts the build.
             "update": "false",
         }
-        resp = await self._client.get(
-            self._url("/_design/buoys/_view/trend"),
-            params=params,
-        )
-        if resp.status_code == 404:
+        # Fail soft. This is the only read left on a view, and a damaged view
+        # index can 500 for some key ranges while serving others (the reduce has
+        # to gather from every shard). The network trend feeds the Trends pulse
+        # cards and one research endpoint; an empty result degrades those to
+        # "no data" -- _network_pulse already renders nulls -- where raising
+        # would take down the whole digest and /api/research/trend with it.
+        try:
+            resp = await self._client.get(
+                self._url("/_design/buoys/_view/trend"),
+                params=params,
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            payload = resp.json()
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            log.warning("trend view unavailable for (%s, %s): %r", stream, field, e)
             return []
-        resp.raise_for_status()
         out = []
-        for row in resp.json().get("rows", []):
+        for row in payload.get("rows", []):
             key = row.get("key", [])
             stats = row.get("value", {}) or {}
             count = stats.get("count", 0)
