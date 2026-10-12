@@ -6,9 +6,14 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-recharts': ['recharts'],
+        // vite 8 bundles with rolldown, which requires a function here --
+        // the object form silently warns and then throws at build time.
+        // Match on package boundaries so recharts' own react-* deps
+        // (react-smooth, victory-vendor, d3-*) land with recharts, not react.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'vendor-react'
+          if (/node_modules[\\/](recharts|react-smooth|victory-vendor|d3-)/.test(id)) return 'vendor-recharts'
         },
       },
     },
