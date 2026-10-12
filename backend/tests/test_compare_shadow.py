@@ -198,3 +198,18 @@ def test_older_overall_ts_is_expected_when_a_stream_was_never_received():
     assert hard == [], hard
     assert to_check == ["standard"]
     assert any("older than prod" in n for n in notes)
+
+
+def test_known_id_collision_stations_are_recorded():
+    """Station 42022/42023 .ocean files carry one row per measurement depth, all
+    sharing a timestamp -- and so one _id. The Python sink keeps the first row
+    (409 swallowed), Flink keeps the last, so these documents legitimately
+    differ in `depth` without either writer being wrong. Measured on
+    buoy-observations: exactly these two pairs, 190 colliding keys in a
+    400k-message window, every one with differing values."""
+    from tools.compare_shadow import KNOWN_ID_COLLISIONS
+    assert ("42022", "ocean") in KNOWN_ID_COLLISIONS
+    assert ("42023", "ocean") in KNOWN_ID_COLLISIONS
+    # The collision allowance is per station+stream, never blanket per station:
+    # 42022's other streams must still be compared strictly.
+    assert ("42022", "standard") not in KNOWN_ID_COLLISIONS

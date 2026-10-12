@@ -31,6 +31,18 @@ from buoys.config import CFG
 HIGH = "￰"
 TYPES = ("obs", "station", "latest")
 
+# Stations whose NDBC .ocean file carries several rows per timestamp, one per
+# measurement depth. `obs:<station>:<stream>:<ts>` has no depth component, so
+# those rows collide on one _id and one of them is silently discarded. The two
+# writers discard opposite ones: the Python sink swallows the 409 and keeps the
+# FIRST row, the Flink sink upserts and keeps the LAST. Neither is more correct
+# -- the id scheme is lossy, and that is the actual bug (tracked separately).
+# Differences confined to these pairs are reported as collisions rather than
+# regressions. Re-measure by counting (stationId, stream, ts) keys delivered
+# more than once on buoy-observations: it was exactly these two over a
+# 400k-message window, 190 keys, every one carrying differing values.
+KNOWN_ID_COLLISIONS = {("42022", "ocean"), ("42023", "ocean")}
+
 
 # ── comparison rules (pure) ───────────────────────────────────────────────────
 
@@ -210,7 +222,7 @@ async def compare_type(client, kind, shadow_db, prod_db, sample, show):
     ids = [d["_id"] for d in shadow_docs]
     prod_docs = await fetch_many(client, prod_db, ids)
 
-    missing, hard_total, noted = [], 0, 0
+    missing, hard_total, noted, collided = [], 0, 0, 0
     shown = 0
     for sdoc in shadow_docs:
         pdoc = prod_docs.get(sdoc["_id"])
@@ -228,6 +240,9 @@ async def compare_type(client, kind, shadow_db, prod_db, sample, show):
                                  f" into the shadow's offset window)")
         else:
             hard, notes = compare_exact(sdoc, pdoc), []
+            if hard and (sdoc.get("stationId"), sdoc.get("stream")) in KNOWN_ID_COLLISIONS:
+                collided += 1
+                hard, notes = [], ["upstream id collision: several rows share this _id"]
         if notes:
             noted += 1
         if hard:
@@ -239,7 +254,11 @@ async def compare_type(client, kind, shadow_db, prod_db, sample, show):
                     print(f"    - {d}")
 
     print(f"\n{kind}: {len(shadow_docs)} compared | {hard_total} unexplained"
-          f" | {noted} with expected-only differences | {len(missing)} shadow-only")
+          f" | {noted} with expected-only differences | {len(missing)} shadow-only"
+          + (f" | {collided} upstream id collision(s)" if collided else ""))
+    if collided:
+        print(f"  {collided} doc(s) differ only because several upstream rows share"
+              f" one _id (see KNOWN_ID_COLLISIONS) -- the writers keep opposite rows")
     if missing[:5]:
         # Not a failure. Flink writes in parallel where the Python sink does
         # sequential PUTs, so the shadow runs ahead and documents appear here
