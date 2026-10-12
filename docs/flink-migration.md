@@ -85,6 +85,14 @@ switches. The live API keeps reading `world_of_buoys` until a phase is proven.
    service. Ids are deterministic, so the switch overwrites documents with
    identical content; nothing is duplicated. Roll back by starting `sink` again.
 
+**Status, 2026-10-12:** phase 1 is running in shadow (MARS jobs `buoys_observations`,
+`buoys_stations`, `buoys_latest`, tagged `buoys`, writing `world_of_buoys_shadow`).
+`tools/compare_shadow.py` passes: obs 2,000 and station 1,940 identical, latest 777 with
+only the expected differences from the starvation fix. The Flink jobs also finish a
+cycle minutes before the Python sink, which writes one document at a time. Before
+cut-over, re-run the comparison after a few days of shadow, so every stream that reports
+has been checked strictly.
+
 ### Phase 2: hourly buckets and anomalies
 
 1. Job `buoys_hourly`: one-hour tumbling windows per (station, stream, field)
