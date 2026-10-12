@@ -284,18 +284,20 @@ class CouchClient:
             "endkey": _json.dumps([stream, field, t1]),
             "group": "true",
             "reduce": "true",
-            # The _stats reduce has no primary-index equivalent, so this is the
-            # one read still served by a view. update=false returns the existing
-            # index instead of blocking on -- or crashing during -- an index
-            # build. Never update=lazy: that serves stale AND starts the build.
-            "update": "false",
+            # No update= pin: the index is healthy again as of 2026-10-12 18:06
+            # UTC, so this serves current data. If it ever has to be pinned
+            # during an index rebuild again, use update=false and NOT
+            # update=lazy -- lazy serves stale AND kicks off the build, which is
+            # what re-entered the damaged shard last time.
         }
-        # Fail soft. This is the only read left on a view, and a damaged view
-        # index can 500 for some key ranges while serving others (the reduce has
-        # to gather from every shard). The network trend feeds the Trends pulse
-        # cards and one research endpoint; an empty result degrades those to
-        # "no data" -- _network_pulse already renders nulls -- where raising
-        # would take down the whole digest and /api/research/trend with it.
+        # Fail soft, permanently. This is the only read left on a view, and a
+        # damaged view index can 500 for some key ranges while serving others
+        # (the reduce gathers from every shard) -- that is exactly what happened
+        # on 2026-10-11, and it fired 14 times before the index was rebuilt. The
+        # network trend feeds the Trends pulse cards and one research endpoint;
+        # an empty result degrades those to "no data" -- _network_pulse already
+        # renders nulls -- where raising takes down the whole digest and
+        # /api/research/trend with it.
         try:
             resp = await self._client.get(
                 self._url("/_design/buoys/_view/trend"),
