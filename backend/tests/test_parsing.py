@@ -71,6 +71,32 @@ def test_parse_timestamp():
     assert iso == "2024-06-15T12:00:00Z"
 
 
+def test_parse_timestamp_emits_a_plain_int():
+    """ts must be an int, not a float -- observation _ids are built from it.
+
+    `assert ts == 1718452800` passes for 1718452800.0 too, so the type needs
+    asserting separately. A float would serialise into the document and then
+    into its _id as "1718452800.0", which breaks the id ordering the series
+    range scans depend on (see tests/test_couch_ids.py). Anything consuming
+    buoy-observations builds ids the same way, so this is a published contract,
+    not just an internal detail.
+    """
+    ts, _ = parse_timestamp("24", "06", "15", "12", "00")
+    assert type(ts) is int
+    assert len(str(ts)) == 10
+
+
+def test_parsed_rows_emit_a_plain_int_ts():
+    """Same contract, enforced where the value actually reaches the topic."""
+    rows = (
+        parse_standard_row("24 06 15 12 00 270 5.1 6.2 1.5 8 7 MM 1015.0 25.0 23.4 18.0 MM MM MM".split()),
+        parse_ocean_row("24 06 15 12 00 10.0 22.1 4.5 35.2 MM MM MM MM 8.1 MM".split()),
+    )
+    for parsed in rows:
+        assert type(parsed["ts"]) is int, parsed
+        assert len(str(parsed["ts"])) == 10
+
+
 # ── parse_standard_row ────────────────────────────────────────────────────────
 
 STANDARD_ROW = "24 06 15 12 00 270 5.1 6.2 1.5 8 7 MM 1015.0 25.0 23.4 18.0 MM MM MM".split()
