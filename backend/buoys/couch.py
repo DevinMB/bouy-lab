@@ -44,6 +44,11 @@ DESIGN_DOC = {
 }
 
 
+def _obs_prefix(station_id: str, stream: str) -> str:
+    """The _id prefix shared by every observation of one station's stream."""
+    return f"obs:{station_id}:{stream}:"
+
+
 class CouchClient:
     def __init__(self, url: str, database: str, user: str, password: str):
         self._base = url.rstrip("/")
@@ -193,46 +198,55 @@ class CouchClient:
                     continue
                 raise
 
-    async def get_all_latest(self) -> list:
-        resp = await self._client.get(
-            self._url("/_design/buoys/_view/latest"),
-            params={"include_docs": "true"},
-        )
+    async def _all_docs_range(
+        self, prefix: str, descending: bool = False, limit: int = None
+    ) -> list:
+        """Fetch every doc whose _id starts with `prefix`, off the primary index.
+
+        The map-reduce views live in a separate index that can lag or corrupt
+        (see get_trend). Document ids are prefix-ordered, so wherever a view
+        existed only to order documents by their id components, an _id range
+        over the always-current primary index does the same job and is faster.
+        """
+        import json as _json
+        high = f"{prefix}\ufff0"
+        params = {
+            "startkey": _json.dumps(high if descending else prefix),
+            "endkey": _json.dumps(prefix if descending else high),
+            "include_docs": "true",
+        }
+        if descending:
+            params["descending"] = "true"
+        if limit is not None:
+            params["limit"] = limit
+        resp = await self._client.get(self._url("/_all_docs"), params=params)
         if resp.status_code == 404:
             return []
         resp.raise_for_status()
-        data = resp.json()
-        return [row["doc"] for row in data.get("rows", []) if "doc" in row]
+        return [row["doc"] for row in resp.json().get("rows", []) if row.get("doc")]
+
+    async def get_all_latest(self) -> list:
+        # Range scan rather than the `latest` view: the same documents, always
+        # current, and unaffected by the state of the view index.
+        return await self._all_docs_range("latest:")
 
     async def get_station(self, station_id: str):
         return await self.get(f"station:{station_id}")
 
     async def get_series(self, station_id: str, stream: str, field: str, limit: int = 200) -> list:
-        # Descending range query: newest first
-        import json as _json
-        params = {
-            "startkey": _json.dumps([station_id, stream, {}]),
-            "endkey": _json.dumps([station_id, stream, 0]),
-            "descending": "true",
-            "limit": limit,
-        }
-        resp = await self._client.get(
-            self._url("/_design/buoys/_view/series"),
-            params=params,
+        # Newest-first off the primary index. An obs id embeds a fixed-width
+        # 10-digit epoch (so through 2286), which makes descending id order
+        # identical to descending ts order -- see test_obs_id_order_matches_ts.
+        docs = await self._all_docs_range(
+            _obs_prefix(station_id, stream), descending=True, limit=limit
         )
-        if resp.status_code == 404:
-            return []
-        resp.raise_for_status()
-        rows = resp.json().get("rows", [])
         result = []
-        for row in rows:
-            values = row.get("value", {}) or {}
-            val = values.get(field)
+        for doc in docs:
+            val = (doc.get("values") or {}).get(field)
             if val is not None:
-                key = row.get("key", [])
                 result.append({
-                    "ts": key[2] if len(key) > 2 else None,
-                    "observedAt": None,  # not stored in view value
+                    "ts": doc.get("ts"),
+                    "observedAt": doc.get("observedAt"),
                     "value": val,
                 })
         return result
@@ -244,27 +258,15 @@ class CouchClient:
         as empty lists. Used by the Trends digest, which needs every standard
         field for every station and can't afford one query per field.
         """
-        import json as _json
-        params = {
-            "startkey": _json.dumps([station_id, stream, {}]),
-            "endkey": _json.dumps([station_id, stream, 0]),
-            "descending": "true",
-            "limit": limit,
-        }
-        resp = await self._client.get(
-            self._url("/_design/buoys/_view/series"),
-            params=params,
+        docs = await self._all_docs_range(
+            _obs_prefix(station_id, stream), descending=True, limit=limit
         )
         out = {f: [] for f in fields}
-        if resp.status_code == 404:
-            return out
-        resp.raise_for_status()
-        for row in resp.json().get("rows", []):
-            values = row.get("value", {}) or {}
-            key = row.get("key", [])
-            ts = key[2] if len(key) > 2 else None
+        for doc in docs:
+            ts = doc.get("ts")
             if ts is None:
                 continue
+            values = doc.get("values") or {}
             for f in fields:
                 val = values.get(f)
                 if val is not None:
@@ -282,6 +284,11 @@ class CouchClient:
             "endkey": _json.dumps([stream, field, t1]),
             "group": "true",
             "reduce": "true",
+            # The _stats reduce has no primary-index equivalent, so this is the
+            # one read still served by a view. update=false returns the existing
+            # index instead of blocking on -- or crashing during -- an index
+            # build. Never update=lazy: that serves stale AND starts the build.
+            "update": "false",
         }
         resp = await self._client.get(
             self._url("/_design/buoys/_view/trend"),
