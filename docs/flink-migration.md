@@ -14,7 +14,7 @@ on 192.168.1.250), and leaves the API reading finished results.
 |---|---|---|---|
 | Ingest (`ingest.py`, `ndbc.py`, `parsing.py`) | Python scraper, every 30 min, ~1,300 stations | **Stays in Python** | Parsing NDBC's fixed-width files in SQL would be painful, and it already only publishes to Kafka. It appears on MARS's pipeline map as an outside producer. |
 | Sink (`sink.py`) | Kafka to CouchDB: `obs:` docs, `latest:` per station, `station:` docs | **Streaming Flink job** (phase 1) | Topic-to-CouchDB with deterministic ids is what MARS's other jobs already do. |
-| Network-wide hourly trend (`get_trend`) | CouchDB `trend` view with `_stats` reduce | **Stays** | CouchDB already maintains it incrementally; it is cheap. |
+| Network-wide hourly trend (`get_trend`) | CouchDB `trend` view with `_stats` reduce | **Stays for now** | Cheap while the view works; see "View index" under Risks. |
 | Regional trend (`_trend_from_stations`) | Fetches up to 80 stations' raw series per request | **Streaming Flink job** (phase 2) | Hourly bucket per station, written as it closes; the API sums finished buckets. |
 | Anomalies (`get_anomalies`) | z-score of all latest values per request | **Streaming Flink job** (phase 2) | A running network mean and spread per metric. |
 | Correlation, teleconnections, propagation (`_pearson`, `_leadlag`) | Pairwise and lag-scan maths per request | **Scheduled Flink batch job** (phase 3) | Every station against every other at 48 lags is too big; limited to nearby stations (as propagation already does), each station's top correlates and leaders can be precomputed hourly or nightly. |
@@ -23,18 +23,36 @@ on 192.168.1.250), and leaves the API reading finished results.
 
 ## Facts the jobs must match
 
-- Topics: `buoy.observations` (key: station), `buoy.stations`. The Python sink's
-  consumer group is `world-of-buoys-sink`; Flink jobs get their own (MARS gives
-  each job `mars-<job>` unless the table names one).
-- CouchDB database `world_of_buoys` (on 192.168.1.250, about 7 GB). Document ids:
-  `obs:<station>:<stream>:<ts>`, `latest:<station>`, `station:<station>`.
-- `latest:<station>` merges every stream for the station into one document:
-  `streams.<stream> = {ts, values}`, the newest `ts`, station name, location,
-  owner, type and available streams, and `waterTempC` (standard stream first,
-  then ocean). The API's `latest` view and the map depend on that exact shape.
-- Views in `_design/buoys`: `series` `[station, stream, ts]`, `latest`, and
-  `trend` `[stream, field, hourBucket]` with `_stats`. The jobs write documents
-  these views already index, so the views stay as they are.
+Read off the live broker and CouchDB on 2026-10-12 (bouy-lab's agent):
+
+- Topics: **`buoy-observations`** and **`buoy-stations`** (hyphens; CLAUDE.md's
+  dotted names are wrong). Key: station id, lowercase UTF-8. Value: UTF-8 JSON.
+  Single partition each. `buoy-observations` keeps 14 days (delete);
+  `buoy-stations` is compacted. The Python sink's group is `world-of-buoys-sink`;
+  Flink jobs get their own (`mars-<job>`).
+- Streams: exactly `standard`, `ocean`, `spec`, `srad`, `dart`. Each stream's
+  `values` has a fixed key set with explicit nulls (NDBC's "MM"); nulls must be
+  preserved.
+- CouchDB database `world_of_buoys` on 192.168.1.250: 10.2 GB on disk, about
+  17.9 million documents.
+- `obs:<station>:<stream>:<ts>` = the topic value verbatim, plus `_id` and
+  `type: "observation"`. `station:<station>` = the topic value verbatim (it also
+  carries `hull`, `payload`, `location`, `timezone`, `ownerCode`, `updatedAt`),
+  plus `_id` and `type: "station"`.
+- `latest:<station>`: `streams.<stream> = {ts, values}`; `ts` and `observedAt`
+  from the newest observation; `waterTempC` = standard's `waterTemperature`, else
+  ocean's, else null; `lat`/`lon` from the station when not null; `name`,
+  `owner`, `ttype` from the station when non-empty (`name` defaults to the
+  station id); `available` is always `[]` (never populated anywhere).
+- **Known bug in today's `latest:`:** it skips any observation older than the
+  station's newest across all streams, so slower streams often never appear
+  (`latest:bzst2` has only `standard`). The Flink job keeps the newest per
+  stream, so it will show more streams than production. Whether phase 1 fixes
+  this or reproduces it is Devin's decision; the comparison script special-cases
+  it either way.
+- Wave height precedence (`standard.waveHeight`, then `spec.waveHeight`) is
+  applied at read time; phase 2's hourly buckets must keep it, or about 256
+  spec-only stations drop out of regional wave trends.
 
 ## The CouchDB connector supports this
 
@@ -52,7 +70,7 @@ switches. The live API keeps reading `world_of_buoys` until a phase is proven.
 
 ### Phase 1: the sink
 
-1. In MARS, catalog tables for `buoy.observations` and `buoy.stations` (raw JSON
+1. In MARS, catalog tables for `buoy-observations` and `buoy-stations` (raw JSON
    passthrough), and CouchDB tables for the shadow database.
 2. Job `buoys_observations`: each observation to `obs:<station>:<stream>:<ts>`,
    with the same fields as today (`type: "observation"`, `values`, ...).
@@ -73,7 +91,7 @@ switches. The live API keeps reading `world_of_buoys` until a phase is proven.
    (mean, min, max, count), to `hourly:<station>:<stream>:<field>:<hour>`.
 2. Job `buoys_anomaly_stats`: running network mean and standard deviation per
    (stream, field) over latest values, to `netstats:<stream>:<field>`.
-3. API: `_trend_from_stations` reads hourly documents for the region's stations
+3. API: `_trend_from_stations` reads hourly documents (by `_all_docs` range) for the region's stations
    instead of raw series; `get_anomalies` reads `netstats` instead of computing.
    Compare responses old against new for a set of regions before switching.
 
@@ -98,8 +116,14 @@ Remove the Python sink service, the request-time computation that phases 2 and
   config changes with a one-step rollback.
 - **Document shape drift.** The comparison script, not inspection, decides when
   a phase is ready.
-- **History.** Flink reads Kafka from its retention window only. The existing
-  CouchDB history stays where it is; jobs write the same ids, so old and new
-  documents coexist without a migration.
+- **History.** Flink reads Kafka from its 14-day retention only. `obs:` history
+  stays in CouchDB under the same ids. `hourly:` documents can only be built for
+  those 14 days; older hours need a backfill from CouchDB or are accepted as
+  missing.
+- **View index.** On 2026-10-11 the `_design/buoys` index for one shard was
+  truncated (`file_truncate_error`); every view, and so every API read, fails
+  until it is rebuilt. New phase 2 and 3 read paths fetch documents by `_id` or
+  `_all_docs` key range, not new map-reduce views, so they do not depend on view
+  indexes.
 - **Bursty input.** Ingest publishes about every 30 minutes; a quiet topic
   between cycles is normal (MARS judges job health by checkpoints, not input).
