@@ -85,7 +85,7 @@ def _meta_ok(field: str, sv, pv, station_id: str) -> bool:
 
 
 def compare_latest(shadow: dict, prod: dict) -> tuple:
-    """latest: -- returns (hard_diffs, expected_notes).
+    """latest: -- returns (hard_diffs, expected_notes, streams_to_check).
 
     Expected under the FIX decision: the shadow may carry more streams, and
     newer entries for a stream, because production drops a reading whose ts is
@@ -105,18 +105,25 @@ def compare_latest(shadow: dict, prod: dict) -> tuple:
         if doc.get("available") != []:
             hard.append(f"{side} available={doc.get('available')!r}, expected []")
 
-    # 3. The shadow must never be older than production.
     s_ts, p_ts = s.get("ts"), p.get("ts")
-    if isinstance(s_ts, int) and isinstance(p_ts, int) and s_ts < p_ts:
-        hard.append(f"shadow ts {s_ts} is OLDER than prod ts {p_ts}")
 
-    # 4. Streams: every production stream must be present and not older.
+    # 3. Streams: every production stream must be present and not older.
     s_streams = s.get("streams") or {}
     p_streams = p.get("streams") or {}
+    to_check = []
     for name, p_entry in p_streams.items():
         s_entry = s_streams.get(name)
         if s_entry is None:
-            hard.append(f"streams.{name} present in prod, missing from shadow")
+            # Cannot be judged here. A shadow job started from Kafka's latest
+            # offset never sees observations published before it came up, so a
+            # stream production accumulated earlier is legitimately absent.
+            # A timestamp test gets this wrong: prod's entry can carry a ts
+            # inside the shadow's time range while its Kafka message predates
+            # the shadow's start offset (observed on latest:41029). The caller
+            # resolves it by asking whether the shadow received any observation
+            # for this stream at all -- if it did and still built no entry,
+            # that is a real bug.
+            to_check.append(name)
             continue
         s_sts, p_sts = s_entry.get("ts"), p_entry.get("ts")
         if isinstance(s_sts, int) and isinstance(p_sts, int) and s_sts < p_sts:
@@ -128,6 +135,19 @@ def compare_latest(shadow: dict, prod: dict) -> tuple:
     for name in set(s_streams) - set(p_streams):
         notes.append(f"streams.{name} only in shadow (prod dropped it)")
 
+    # 4. The shadow must not be older than production -- but only decidable when
+    # the shadow holds every stream prod does. prod's overall ts is the newest
+    # across its streams, so if the shadow never received one of them, prod
+    # being newer is arithmetic rather than a defect (observed on latest:cpxc1,
+    # where the shadow only ever got ocean and prod's ts comes from standard).
+    if isinstance(s_ts, int) and isinstance(p_ts, int) and s_ts < p_ts:
+        if to_check:
+            notes.append(f"overall ts older than prod ({s_ts} < {p_ts}), consistent with"
+                         f" prod holding stream(s) the shadow has not received:"
+                         f" {', '.join(sorted(to_check))}")
+        else:
+            hard.append(f"shadow ts {s_ts} is OLDER than prod ts {p_ts}")
+
     # 5. Remaining fields only have to agree when the station's overall ts does.
     if s_ts == p_ts:
         for field in ("stationId", "type", "observedAt", "name", "lat", "lon", "owner", "ttype"):
@@ -136,7 +156,7 @@ def compare_latest(shadow: dict, prod: dict) -> tuple:
     else:
         notes.append(f"ts newer in shadow ({p_ts} -> {s_ts})")
 
-    return hard, notes
+    return hard, notes, to_check
 
 
 # ── I/O ───────────────────────────────────────────────────────────────────────
@@ -173,6 +193,15 @@ async def fetch_many(client, db, ids):
     return out
 
 
+def obs_prefix(station_id: str, stream: str) -> str:
+    return f"obs:{station_id}:{stream}:"
+
+
+async def shadow_saw_stream(client, shadow_db, station_id, stream) -> bool:
+    """Did the shadow receive any observation at all for this station+stream?"""
+    return bool(await fetch_range(client, shadow_db, obs_prefix(station_id, stream), limit=1))
+
+
 async def compare_type(client, kind, shadow_db, prod_db, sample, show):
     shadow_docs = await fetch_range(client, shadow_db, f"{kind}:", limit=sample)
     if not shadow_docs:
@@ -189,7 +218,14 @@ async def compare_type(client, kind, shadow_db, prod_db, sample, show):
             missing.append(sdoc["_id"])
             continue
         if kind == "latest":
-            hard, notes = compare_latest(sdoc, pdoc)
+            hard, notes, to_check = compare_latest(sdoc, pdoc)
+            for stream in to_check:
+                if await shadow_saw_stream(client, shadow_db, sdoc.get("stationId"), stream):
+                    hard.append(f"streams.{stream}: shadow received observations"
+                                f" for it but built no entry")
+                else:
+                    notes.append(f"streams.{stream} only in prod (never delivered"
+                                 f" into the shadow's offset window)")
         else:
             hard, notes = compare_exact(sdoc, pdoc), []
         if notes:
@@ -203,9 +239,14 @@ async def compare_type(client, kind, shadow_db, prod_db, sample, show):
                     print(f"    - {d}")
 
     print(f"\n{kind}: {len(shadow_docs)} compared | {hard_total} unexplained"
-          f" | {noted} with expected-only differences | {len(missing)} absent from prod")
+          f" | {noted} with expected-only differences | {len(missing)} shadow-only")
     if missing[:5]:
-        print(f"  absent from prod (first 5): {missing[:5]}")
+        # Not a failure. Flink writes in parallel where the Python sink does
+        # sequential PUTs, so the shadow runs ahead and documents appear here
+        # before prod has written them. Expect this to shrink between runs;
+        # a count that stays flat or grows is worth investigating.
+        print("  present in shadow, not yet in prod -- the Python sink is behind")
+        print(f"  (first 5): {missing[:5]}")
     return hard_total, len(shadow_docs)
 
 
