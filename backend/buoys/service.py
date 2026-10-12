@@ -549,3 +549,297 @@ async def get_stats(couch: CouchClient, cache: TTLCache) -> dict:
     }
     cache.set("stats", stats)
     return stats
+
+
+
+# ── Trends digest ("interesting trends") ──────────────────────────────────────
+#
+# Scans every located station's recent series for a handful of fields and
+# ranks what's notable right now: fastest warming/cooling water, falling
+# pressure, building seas, strongest wind, the largest air–sea gap, and
+# stations that just went quiet. Everything is computed on hourly buckets so
+# buoys on different cadences are comparable.
+#
+# A full scan is ~1,100 stations × up to 1,000 rows and takes tens of seconds,
+# so it runs ONCE for the longest window and every shorter window is derived
+# from the same data. `highlights_refresher` (started from the app lifespan)
+# keeps all windows warm in the cache; requests never wait on a scan except
+# right after startup.
+
+HIGHLIGHT_WINDOWS = (24, 72, 168)
+HIGHLIGHT_DEFAULT_HOURS = 72
+
+# Fields scanned per stream. spec.waveHeight is only used as a fallback for
+# stations that don't report standard.waveHeight (gotcha 5).
+HIGHLIGHT_FIELDS = {
+    "standard": ["waterTemperature", "airTemperature", "windSpeed", "gustSpeed", "waveHeight", "pressure"],
+    "spec": ["waveHeight"],
+}
+
+# Physically plausible ranges; anything outside is a sensor fault, not a trend.
+SANE_RANGES = {
+    "waterTemperature": (-5.0, 45.0),
+    "airTemperature": (-60.0, 60.0),
+    "windSpeed": (0.0, 90.0),
+    "gustSpeed": (0.0, 110.0),
+    "waveHeight": (0.0, 30.0),
+    "pressure": (850.0, 1100.0),
+}
+
+HIGHLIGHT_TOP_N = 6
+# A station's newest bucket must be at most this old to count as "now".
+HIGHLIGHT_NOW_MAX_AGE_H = 6
+# A trend needs at least this many hourly buckets spanning at least this
+# fraction of the window; many international stations have only a few points.
+HIGHLIGHT_MIN_BUCKETS = 6
+HIGHLIGHT_MIN_SPAN_FRAC = 0.5
+
+_highlight_lock = asyncio.Lock()
+
+
+def _window_buckets(points: list, t0: int, t1: int, lo: float, hi: float) -> dict:
+    """{bucket_ts: value} for in-window, in-range points (newest per hour)."""
+    out = {}
+    for pt in points:
+        ts, val = pt.get("ts"), pt.get("value")
+        if ts is None or val is None:
+            continue
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            continue
+        if not (lo <= val <= hi):
+            continue
+        b = (ts // 3600) * 3600
+        if t0 <= b <= t1:
+            out.setdefault(b, val)  # newest-first input ⇒ first seen is newest
+    return out
+
+
+def _series_stats(buckets: dict, hours: int, now_bucket: int):
+    """Summarise one station's hourly series. Returns None if there is nothing usable.
+
+    `latest` is only set when the newest bucket is recent enough to be "now";
+    `slope` (units/hour, least squares) only when the series is dense enough
+    to call a trend.
+    """
+    if not buckets:
+        return None
+    keys = sorted(buckets)
+    newest, oldest = keys[-1], keys[0]
+    n = len(keys)
+    span_h = (newest - oldest) / 3600
+    vals = [buckets[k] for k in keys]
+    mean = sum(vals) / n
+    std = (sum((v - mean) ** 2 for v in vals) / n) ** 0.5 if n > 1 else 0.0
+
+    latest = buckets[newest] if (now_bucket - newest) <= HIGHLIGHT_NOW_MAX_AGE_H * 3600 else None
+
+    slope = None
+    if n >= HIGHLIGHT_MIN_BUCKETS and span_h >= HIGHLIGHT_MIN_SPAN_FRAC * hours and latest is not None:
+        xs = [(k - oldest) / 3600 for k in keys]
+        mx = sum(xs) / n
+        vx = sum((x - mx) ** 2 for x in xs)
+        if vx > 0:
+            slope = sum((x - mx) * (v - mean) for x, v in zip(xs, vals)) / vx
+
+    return {
+        "n": n, "spanHours": round(span_h, 1), "latest": latest,
+        "mean": mean, "std": std, "slope": slope,
+        "max": max(vals), "min": min(vals),
+        "series": [[k, round(buckets[k], 3)] for k in keys],
+    }
+
+
+def _highlight_item(meta: dict, st: dict, value: float, **extra) -> dict:
+    return {
+        "id": meta.get("id"), "name": meta.get("name") or meta.get("id"),
+        "lat": meta.get("lat"), "lon": meta.get("lon"),
+        "value": round(value, 3),
+        "latest": round(st["latest"], 3) if st.get("latest") is not None else None,
+        "n": st["n"], "spanHours": st["spanHours"], "series": st["series"],
+        **extra,
+    }
+
+
+def _rank(rows: list, key, reverse: bool = True, top_n: int = HIGHLIGHT_TOP_N) -> list:
+    return sorted(rows, key=key, reverse=reverse)[:top_n]
+
+
+async def _scan_network(couch: CouchClient, snapshot: list, t0: int, t1: int) -> list:
+    """Fetch + hourly-bucket every field for every station: [(meta, {field: {bucket: value}})]."""
+    limit = 1000  # the series view cap ≈ 7 days at 10-min cadence
+    sem = asyncio.Semaphore(24)
+
+    async def _one(item: dict):
+        available = item.get("available") or []
+        sid = item["id"]
+        raw: dict = {}
+        async with sem:
+            if "standard" in available:
+                raw = await couch.get_series_multi(sid, "standard", HIGHLIGHT_FIELDS["standard"], limit)
+            if "spec" in available and not raw.get("waveHeight"):
+                spec = await couch.get_series_multi(sid, "spec", HIGHLIGHT_FIELDS["spec"], limit)
+                raw["waveHeight"] = spec.get("waveHeight", [])
+        buckets = {}
+        for field, pts in raw.items():
+            lo, hi = SANE_RANGES[field]
+            b = _window_buckets(pts, t0, t1, lo, hi)
+            if b:
+                buckets[field] = b
+        return item, buckets
+
+    return await asyncio.gather(*[_one(s) for s in snapshot]) if snapshot else []
+
+
+async def _network_pulse(couch: CouchClient, t0: int, t1: int) -> list:
+    """Network-mean now vs. start of window for the headline fields (via the trend view)."""
+    fields = [("standard", "waterTemperature"), ("standard", "airTemperature"),
+              ("standard", "windSpeed"), ("standard", "waveHeight"), ("standard", "pressure")]
+    trends = await asyncio.gather(*[couch.get_trend(s, f, t0, t1) for s, f in fields])
+    pulse = []
+    for (stream, field), pts in zip(fields, trends):
+        pts = [p for p in pts if p.get("ts") is not None and p.get("count")]
+        if len(pts) < 6:
+            pulse.append({"stream": stream, "field": field, "now": None, "then": None, "delta": None, "buoys": 0})
+            continue
+        # Compare the mean of the first and last 3 hourly buckets so a single
+        # thin bucket (e.g. the current partial hour) can't swing the headline.
+        head, tail = pts[:3], pts[-3:]
+        then = sum(p["mean"] for p in head) / len(head)
+        now = sum(p["mean"] for p in tail) / len(tail)
+        pulse.append({
+            "stream": stream, "field": field,
+            "now": round(now, 2), "then": round(then, 2), "delta": round(now - then, 2),
+            "buoys": max(p["count"] for p in tail),
+        })
+    return pulse
+
+
+def _digest(scanned: list, snapshot: list, hours: int, t1: int) -> dict:
+    """Rank one window's highlights from the scanned buckets (no I/O)."""
+    t0 = t1 - hours * 3600
+    now_bucket = (t1 // 3600) * 3600
+
+    warming, pressure_rows, seas_building, biggest_seas = [], [], [], []
+    windiest, volatile, air_sea = [], [], []
+    with_trend = 0
+    for meta, buckets in scanned:
+        stats = {}
+        for field, b in buckets.items():
+            st = _series_stats({k: v for k, v in b.items() if k >= t0}, hours, now_bucket)
+            if st:
+                stats[field] = st
+        if any(st["slope"] is not None for st in stats.values()):
+            with_trend += 1
+
+        wt = stats.get("waterTemperature")
+        if wt and wt["slope"] is not None:
+            warming.append(_highlight_item(meta, wt, wt["slope"] * hours, slopePerDay=round(wt["slope"] * 24, 3)))
+        if wt and wt["n"] >= HIGHLIGHT_MIN_BUCKETS and wt["latest"] is not None:
+            volatile.append(_highlight_item(meta, wt, wt["std"], range=round(wt["max"] - wt["min"], 3)))
+        pr = stats.get("pressure")
+        if pr and pr["slope"] is not None:
+            pressure_rows.append(_highlight_item(meta, pr, pr["slope"] * hours, slopePerDay=round(pr["slope"] * 24, 3)))
+        wv = stats.get("waveHeight")
+        if wv and wv["slope"] is not None:
+            seas_building.append(_highlight_item(meta, wv, wv["slope"] * hours, slopePerDay=round(wv["slope"] * 24, 3)))
+        if wv and wv["latest"] is not None:
+            biggest_seas.append(_highlight_item(meta, wv, wv["latest"], peak=round(wv["max"], 3)))
+        ws = stats.get("windSpeed")
+        if ws and ws["latest"] is not None:
+            gs = stats.get("gustSpeed")
+            gust = gs["latest"] if gs and gs["latest"] is not None else None
+            windiest.append(_highlight_item(meta, ws, ws["latest"], gust=round(gust, 3) if gust is not None else None))
+        at = stats.get("airTemperature")
+        if wt and at and wt["latest"] is not None and at["latest"] is not None:
+            gap = at["latest"] - wt["latest"]
+            air_sea.append(_highlight_item(meta, at, gap, air=round(at["latest"], 3), water=round(wt["latest"], 3)))
+
+    # Stations that stopped reporting inside the window: last observation is
+    # older than the fresh window but not older than window + fresh window.
+    fresh_s = CFG.FRESH_WINDOW_HOURS * 3600
+    quiet = []
+    for item in snapshot:
+        obs_at = item.get("latest", {}).get("observedAt")
+        if not obs_at:
+            continue
+        try:
+            last = datetime.strptime(obs_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+        age = t1 - last
+        if fresh_s < age <= fresh_s + hours * 3600:
+            quiet.append({
+                "id": item["id"], "name": item.get("name") or item["id"],
+                "lat": item.get("lat"), "lon": item.get("lon"),
+                "lastSeen": int(last), "silentHours": round(age / 3600, 1),
+            })
+    quiet.sort(key=lambda q: q["silentHours"])
+
+    return {
+        "hours": hours,
+        "generatedAt": t1,
+        "stationsScanned": len(scanned),
+        "stationsWithTrend": with_trend,
+        "sections": {
+            "warming": _rank([r for r in warming if r["value"] > 0], key=lambda r: r["value"]),
+            "cooling": _rank([r for r in warming if r["value"] < 0], key=lambda r: r["value"], reverse=False),
+            "pressureFalling": _rank([r for r in pressure_rows if r["value"] < 0], key=lambda r: r["value"], reverse=False),
+            "pressureRising": _rank([r for r in pressure_rows if r["value"] > 0], key=lambda r: r["value"]),
+            "seasBuilding": _rank([r for r in seas_building if r["value"] > 0], key=lambda r: r["value"]),
+            "biggestSeas": _rank(biggest_seas, key=lambda r: r["value"]),
+            "windiest": _rank(windiest, key=lambda r: r["value"]),
+            "volatileWater": _rank(volatile, key=lambda r: r["value"]),
+            "airSeaGap": _rank(air_sea, key=lambda r: abs(r["value"])),
+            "wentQuiet": quiet[:HIGHLIGHT_TOP_N * 2],
+        },
+    }
+
+
+async def refresh_highlights(couch: CouchClient, cache: TTLCache) -> dict:
+    """Scan the network once and cache a digest for every window. Returns {hours: digest}."""
+    async with _highlight_lock:
+        started = time.monotonic()
+        t1 = int(time.time())
+        max_hours = max(HIGHLIGHT_WINDOWS)
+        snapshot = await get_snapshot(couch, cache, located_only=True)
+        scanned = await _scan_network(couch, snapshot, t1 - max_hours * 3600, t1)
+        pulses = await asyncio.gather(*[_network_pulse(couch, t1 - h * 3600, t1) for h in HIGHLIGHT_WINDOWS])
+        out = {}
+        for hours, pulse in zip(HIGHLIGHT_WINDOWS, pulses):
+            digest = {**_digest(scanned, snapshot, hours, t1), "pulse": pulse}
+            # Entries outlive the refresh interval so a slow scan never leaves a gap.
+            cache.set(f"highlights:{hours}", digest, ttl=CFG.HIGHLIGHTS_TTL_SECONDS * 3)
+            out[hours] = digest
+        log.info("highlights: scanned %d stations for %s in %.1fs",
+                 len(scanned), HIGHLIGHT_WINDOWS, time.monotonic() - started)
+        return out
+
+
+async def get_highlights(couch: CouchClient, cache: TTLCache, hours: int) -> dict:
+    """The Trends digest for one window; falls back to a full refresh if the cache is cold."""
+    if hours not in HIGHLIGHT_WINDOWS:
+        raise ValueError(f"hours must be one of {HIGHLIGHT_WINDOWS}")
+    cached = cache.get(f"highlights:{hours}")
+    if cached is not None:
+        return cached
+    if _highlight_lock.locked():
+        # A refresh is already running — wait for it rather than starting another.
+        async with _highlight_lock:
+            cached = cache.get(f"highlights:{hours}")
+            if cached is not None:
+                return cached
+    return (await refresh_highlights(couch, cache))[hours]
+
+
+async def highlights_refresher(couch: CouchClient, cache: TTLCache) -> None:
+    """Background loop: keep every Trends window warm. Run as an asyncio task from the app lifespan."""
+    while True:
+        try:
+            await refresh_highlights(couch, cache)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — never let the refresher die
+            log.warning("highlights refresh failed: %r", e)
+        await asyncio.sleep(CFG.HIGHLIGHTS_TTL_SECONDS)

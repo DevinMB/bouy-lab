@@ -41,8 +41,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Could not ensure CouchDB views on startup: %r", e)
 
+    # Keep the Trends digest warm — a full network scan is too slow to run per request.
+    refresher = asyncio.create_task(service.highlights_refresher(_couch, _cache))
+
     yield
 
+    refresher.cancel()
+    try:
+        await refresher
+    except asyncio.CancelledError:
+        pass
     await _couch.__aexit__(None, None, None)
 
 
@@ -223,6 +231,16 @@ async def research_propagation(
         couch, cache, target.strip(), stream, field, hours,
         max_lag_hours=max_lag_hours, top_n=top_n, max_dist_km=max_dist_km,
     )
+
+
+@app.get("/api/research/highlights")
+async def research_highlights(hours: int = Query(default=service.HIGHLIGHT_DEFAULT_HOURS)):
+    """Trends digest: what's notable across the network right now (see service.get_highlights)."""
+    if hours not in service.HIGHLIGHT_WINDOWS:
+        raise HTTPException(status_code=422, detail=f"hours must be one of {list(service.HIGHLIGHT_WINDOWS)}")
+    couch = _get_couch()
+    cache = _get_cache()
+    return await service.get_highlights(couch, cache, hours)
 
 
 @app.get("/api/research/anomalies")

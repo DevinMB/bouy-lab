@@ -54,6 +54,11 @@ export async function fetchPropagation(target, stream, field, hours = 336, maxLa
   return apiFetch(`/research/propagation?target=${encodeURIComponent(target)}&stream=${stream}&field=${field}&hours=${hours}&max_lag_hours=${maxLagHours}&top_n=${topN}&max_dist_km=${maxDistKm}`)
 }
 
+// Trends digest. `hours` must be one of the server's fixed windows (24 / 72 / 168).
+export async function fetchHighlights(hours = 72) {
+  return apiFetch(`/research/highlights?hours=${hours}`)
+}
+
 export async function fetchHealth() {
   return apiFetch('/health')
 }
@@ -81,4 +86,37 @@ export const units = {
     km == null ? '—' : useMetric ? `${km.toFixed(1)} km` : `${(km * 0.621371).toFixed(1)} mi`,
 
   displayTemp: (c, useMetric) => (useMetric ? c : (c != null ? c * 9 / 5 + 32 : null)),
+
+  // Generic conversion by unit family ('temp' | 'wind' | 'wave' | 'pressure' | '').
+  // `convert` is for absolute readings; `convertDelta` for differences and
+  // spreads, where a temperature must scale by 9/5 without the +32 offset.
+  convert: (v, unit, useMetric) => {
+    if (v == null || useMetric) return v
+    switch (unit) {
+      case 'temp': return v * 9 / 5 + 32
+      case 'wind': return v * 2.23694
+      case 'wave': return v * 3.28084
+      case 'pressure': return v * 0.02953
+      default: return v
+    }
+  },
+  convertDelta: (v, unit, useMetric) => {
+    if (v == null || useMetric) return v
+    switch (unit) {
+      case 'temp': return v * 9 / 5
+      case 'wind': return v * 2.23694
+      case 'wave': return v * 3.28084
+      case 'pressure': return v * 0.02953
+      default: return v
+    }
+  },
+  unitLabel: (unit, useMetric) => {
+    switch (unit) {
+      case 'temp': return useMetric ? '°C' : '°F'
+      case 'wind': return useMetric ? 'm/s' : 'mph'
+      case 'wave': return useMetric ? 'm' : 'ft'
+      case 'pressure': return useMetric ? 'hPa' : 'inHg'
+      default: return ''
+    }
+  },
 }

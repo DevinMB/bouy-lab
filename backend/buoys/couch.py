@@ -237,6 +237,40 @@ class CouchClient:
                 })
         return result
 
+    async def get_series_multi(self, station_id: str, stream: str, fields: list, limit: int = 200) -> dict:
+        """Newest-first series for several fields of one stream in a single view query.
+
+        Returns {field: [{ts, value}]}; fields the station never reports come back
+        as empty lists. Used by the Trends digest, which needs every standard
+        field for every station and can't afford one query per field.
+        """
+        import json as _json
+        params = {
+            "startkey": _json.dumps([station_id, stream, {}]),
+            "endkey": _json.dumps([station_id, stream, 0]),
+            "descending": "true",
+            "limit": limit,
+        }
+        resp = await self._client.get(
+            self._url("/_design/buoys/_view/series"),
+            params=params,
+        )
+        out = {f: [] for f in fields}
+        if resp.status_code == 404:
+            return out
+        resp.raise_for_status()
+        for row in resp.json().get("rows", []):
+            values = row.get("value", {}) or {}
+            key = row.get("key", [])
+            ts = key[2] if len(key) > 2 else None
+            if ts is None:
+                continue
+            for f in fields:
+                val = values.get(f)
+                if val is not None:
+                    out[f].append({"ts": ts, "value": val})
+        return out
+
     async def get_trend(self, stream: str, field: str, t0: int, t1: int) -> list:
         """Network-wide hourly stats for one (stream, field) over [t0, t1].
 

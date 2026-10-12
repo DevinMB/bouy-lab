@@ -89,6 +89,34 @@ class FakeCouchClient:
                 result.append({"ts": o["ts"], "observedAt": o.get("observedAt"), "value": val})
         return result
 
+    async def get_series_multi(self, station_id: str, stream: str, fields: list, limit: int = 200) -> dict:
+        prefix = f"obs:{station_id}:{stream}:"
+        obs = [d for _id, d in self._docs.items() if _id.startswith(prefix)]
+        obs.sort(key=lambda d: d.get("ts", 0), reverse=True)
+        out = {f: [] for f in fields}
+        for o in obs[:limit]:
+            for f in fields:
+                val = o.get("values", {}).get(f)
+                if val is not None:
+                    out[f].append({"ts": o["ts"], "value": val})
+        return out
+
+    async def get_trend(self, stream: str, field: str, t0: int, t1: int) -> list:
+        """Hourly mean/min/max across all stations, mirroring the `trend` reduce view."""
+        buckets: dict = {}
+        for _id, d in self._docs.items():
+            if d.get("type") != "observation" or d.get("stream") != stream:
+                continue
+            val = d.get("values", {}).get(f"{field}")
+            ts = d.get("ts")
+            if val is None or ts is None:
+                continue
+            b = (ts // 3600) * 3600
+            if t0 <= b <= t1:
+                buckets.setdefault(b, []).append(val)
+        return [{"ts": b, "mean": sum(v) / len(v), "min": min(v), "max": max(v), "count": len(v)}
+                for b, v in sorted(buckets.items())]
+
     async def health_check(self) -> bool:
         return True
 

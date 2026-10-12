@@ -1,6 +1,6 @@
 # World of Buoys
 
-Self-hosted visualization of the NOAA NDBC buoy network. Dark telemetry UI with a live map, fleet operations dashboard, nearby-buoy finder, and a research tab for network/regional trends and cross-buoy correlation. Shareable per-buoy links. Kafka-native pipeline, CouchDB storage.
+Self-hosted visualization of the NOAA NDBC buoy network. Dark telemetry UI with a live map, a trends digest of what's notable across the network right now, fleet operations dashboard, nearby-buoy finder, and a research tab for network/regional trends and cross-buoy correlation. Shareable per-buoy links. Kafka-native pipeline, CouchDB storage.
 
 ## Architecture
 
@@ -107,6 +107,7 @@ The `cloudflared` service only starts when `--profile tunnel` is specified — l
 | `INGEST_STATION_FILTER` | _(empty)_ | Comma-sep station IDs to limit ingest (testing) |
 | `INGEST_MAX_CONCURRENCY` | `16` | Parallel realtime2 fetches |
 | `SNAPSHOT_TTL_SECONDS` | `60` | In-process cache TTL for the buoy snapshot |
+| `HIGHLIGHTS_TTL_SECONDS` | `600` | How often the Trends digest rescans the network (a scan is ~40 s) |
 | `FRESH_WINDOW_HOURS` | `24` | Hours before a station is considered "not reporting" |
 | `WEB_PORT` | `8080` | Host port for the frontend |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(empty)_ | Tunnel token (only needed with `--profile tunnel`) |
@@ -130,6 +131,7 @@ All temperatures in °C, wind in m/s, wave heights in m, pressure in hPa. The fr
 | GET | `/api/research/teleconnections` | Rank every buoy by correlation to a reference (`?ref=41008&stream=...`) |
 | GET | `/api/research/propagation` | Upstream leaders + lead/lag forecast for a target (`?target=46026&stream=...`) |
 | GET | `/api/research/anomalies` | Buoys farthest from the network/region norm now (`?stream=...&scope=network`) |
+| GET | `/api/research/highlights` | Trends digest: network pulse + ranked highlights (`?hours=72`; 24, 72 or 168) |
 
 Example:
 ```bash

@@ -20,9 +20,10 @@ class TTLCache:
                 return None
             return value
 
-    def set(self, key: str, value: Any) -> None:
+    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        """Store a value; `ttl` overrides the cache-wide default for this entry."""
         with self._lock:
-            self._store[key] = (value, time.monotonic() + self._ttl)
+            self._store[key] = (value, time.monotonic() + (self._ttl if ttl is None else ttl))
 
     def get_or_set(self, key: str, factory: Callable) -> Any:
         cached = self.get(key)

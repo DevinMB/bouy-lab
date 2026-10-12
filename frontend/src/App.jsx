@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { fetchBuoys, fetchStats } from './api'
 
 const MapView = lazy(() => import('./components/MapView'))
+const Trends = lazy(() => import('./components/Trends'))
 const Operations = lazy(() => import('./components/Operations'))
 const Nearby = lazy(() => import('./components/Nearby'))
 const Research = lazy(() => import('./components/Research'))
@@ -150,7 +151,7 @@ export default function App() {
       </header>
 
       <nav className="tab-bar">
-        {['map', 'operations', 'nearby', 'research'].map((t) => (
+        {['map', 'trends', 'operations', 'nearby', 'research'].map((t) => (
           <div
             key={t}
             className={`tab${tab === t ? ' active' : ''}`}
@@ -183,6 +184,12 @@ export default function App() {
             />
           </Suspense>
         </div>
+
+        {tab === 'trends' && (
+          <Suspense fallback={<div className="loading-veil">Loading trends…</div>}>
+            <Trends buoys={buoys} useMetric={useMetric} onSelectBuoy={handleSelectBuoy} />
+          </Suspense>
+        )}
 
         {tab === 'operations' && (
           <Suspense fallback={<div className="loading-veil">Loading operations…</div>}>

@@ -157,3 +157,97 @@ async def test_series(client):
     assert data["stationId"] == "41008"
     assert data["stream"] == "standard"
     assert isinstance(data["data"], list)
+
+
+def _hourly_obs(station_id, stream, start_ts, hours, values_fn):
+    """Seed docs: one observation per hour ending at start_ts (newest first)."""
+    docs = []
+    for h in range(hours):
+        ts = start_ts - h * 3600
+        docs.append({
+            "_id": f"obs:{station_id}:{stream}:{ts}",
+            "type": "observation",
+            "stationId": station_id, "stream": stream, "ts": ts,
+            "values": values_fn(h),
+        })
+    return docs
+
+
+@pytest.mark.asyncio
+async def test_highlights(client):
+    import time
+    now = int(time.time())
+    # 41008: 72h of hourly data — water warming 0.1 °C/h, pressure falling 0.5 hPa/h,
+    # seas building, brisk wind, warm air over cooler water.
+    docs = _hourly_obs("41008", "standard", now, 72, lambda h: {
+        "waterTemperature": 25.0 - 0.1 * h,
+        "airTemperature": 30.0,
+        "pressure": 1000.0 + 0.5 * h,
+        "waveHeight": 3.0 - 0.02 * h,
+        "windSpeed": 12.0, "gustSpeed": 15.0,
+    })
+    # 44013: only 3 points — too sparse for a trend, but "now" values still rank.
+    docs += _hourly_obs("44013", "standard", now, 3, lambda h: {
+        "waterTemperature": 15.0, "windSpeed": 20.0, "pressure": 1010.0,
+        # 999 °C is a sensor fault and must be dropped by the sanity range.
+        "airTemperature": 999.0,
+    })
+    main_module._couch.seed(docs)
+
+    resp = await client.get("/api/research/highlights?hours=72")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["hours"] == 72
+    assert data["stationsScanned"] == 2
+    assert data["stationsWithTrend"] == 1
+    s = data["sections"]
+
+    assert [r["id"] for r in s["warming"]] == ["41008"]
+    assert s["warming"][0]["value"] == pytest.approx(7.2, abs=0.05)   # 0.1 °C/h × 72h
+    assert s["warming"][0]["latest"] == pytest.approx(25.0)
+    assert len(s["warming"][0]["series"]) == 72
+    assert s["cooling"] == []
+
+    assert [r["id"] for r in s["pressureFalling"]] == ["41008"]
+    assert s["pressureFalling"][0]["value"] == pytest.approx(-36.0, abs=0.1)
+    assert s["pressureRising"] == []
+
+    assert [r["id"] for r in s["seasBuilding"]] == ["41008"]
+    assert [r["id"] for r in s["biggestSeas"]] == ["41008"]
+
+    # Windiest ranks by current wind; the sparse station still counts for "now".
+    assert [r["id"] for r in s["windiest"]] == ["44013", "41008"]
+    assert s["windiest"][1]["gust"] == pytest.approx(15.0)
+
+    # Air–sea gap needs both fields; 44013's bogus air temp was dropped.
+    assert [r["id"] for r in s["airSeaGap"]] == ["41008"]
+    assert s["airSeaGap"][0]["value"] == pytest.approx(5.0)
+
+    # Volatility needs ≥6 buckets.
+    assert [r["id"] for r in s["volatileWater"]] == ["41008"]
+
+    # Seeded latest docs are from 2024 — far older than the window, so not "went quiet".
+    assert s["wentQuiet"] == []
+
+    pulse = {p["field"]: p for p in data["pulse"]}
+    assert pulse["waterTemperature"]["delta"] > 0
+    assert pulse["pressure"]["delta"] < 0
+
+    # Second call is served from cache.
+    resp2 = await client.get("/api/research/highlights?hours=72")
+    assert resp2.json()["generatedAt"] == data["generatedAt"]
+
+
+@pytest.mark.asyncio
+async def test_highlights_empty_network(client):
+    resp = await client.get("/api/research/highlights?hours=24")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["stationsWithTrend"] == 0
+    assert all(rows == [] for rows in data["sections"].values())
+
+
+@pytest.mark.asyncio
+async def test_highlights_hours_bounds(client):
+    assert (await client.get("/api/research/highlights?hours=6")).status_code == 422
+    assert (await client.get("/api/research/highlights?hours=720")).status_code == 422

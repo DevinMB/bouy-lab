@@ -32,7 +32,7 @@ def test_coerce_mm_never_nan():
     result = coerce_float("MM")
     assert result is None
     # Ensure it's not float("nan")
-    assert result != result is False  # nan != nan would be True; None != None is False
+    assert not (result != result)  # nan != nan would be True; None != None is False
 
 
 # ── parse_location ────────────────────────────────────────────────────────────

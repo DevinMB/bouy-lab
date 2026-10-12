@@ -48,6 +48,9 @@ class Config:
 
     # API
     SNAPSHOT_TTL_SECONDS: int = 60
+    # The Trends digest scans every station's series; cache it much longer
+    # than the snapshot (NDBC only updates every 30 min anyway).
+    HIGHLIGHTS_TTL_SECONDS: int = 600
     FRESH_WINDOW_HOURS: int = 24
     CORS_ALLOW_ORIGINS: list = field(default_factory=list)
 
@@ -83,6 +86,7 @@ def _load() -> Config:
         INGEST_MAX_CONCURRENCY=int(_env("INGEST_MAX_CONCURRENCY", "16")),
         INGEST_BACKFILL_ROWS=int(_env("INGEST_BACKFILL_ROWS", "120")),
         SNAPSHOT_TTL_SECONDS=int(_env("SNAPSHOT_TTL_SECONDS", "60")),
+        HIGHLIGHTS_TTL_SECONDS=int(_env("HIGHLIGHTS_TTL_SECONDS", "600")),
         FRESH_WINDOW_HOURS=int(_env("FRESH_WINDOW_HOURS", "24")),
         CORS_ALLOW_ORIGINS=cors_origins,
         WEB_PORT=int(_env("WEB_PORT", "8080")),
