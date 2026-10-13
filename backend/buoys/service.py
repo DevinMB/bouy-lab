@@ -129,6 +129,18 @@ async def get_trend(
 # cost of a large drawn selection.
 MAX_REGION_STATIONS = 80
 
+# The (stream, field) pairs phase 2's Flink job materialises as hourly: docs --
+# exactly Research.jsx's METRICS. Anything outside this set still works: the
+# trend falls back to raw obs: series, just slower and subject to the point cap.
+# Adding a metric to the UI therefore does not require a Flink change first.
+HOURLY_PAIRS = {
+    ("standard", "waterTemperature"), ("standard", "airTemperature"),
+    ("standard", "windSpeed"), ("standard", "gustSpeed"),
+    ("standard", "waveHeight"), ("standard", "pressure"),
+    ("spec", "waveHeight"), ("spec", "swellHeight"),
+    ("srad", "solarRadiation"), ("ocean", "waterTemperature"),
+}
+
 
 async def _trend_from_stations(
     couch: CouchClient, station_ids: list, stream: str, field: str, hours: int
@@ -138,16 +150,30 @@ async def _trend_from_stations(
     Returns (points, contributing) where contributing is the number of stations
     that actually had at least one reading in the window.
     """
-    limit = min(1000, max(48, hours + 12))
     t1 = int(time.time())
     t0 = t1 - hours * 3600
+    use_hourly = (stream, field) in HOURLY_PAIRS
+    lo, hi = SANE_RANGES.get(field, (float("-inf"), float("inf")))
+    # Only the fallback needs a point cap; hourly: has none, which is the point.
+    limit = min(1000, max(48, hours + 12))
 
     async def _station_buckets(sid: str) -> dict:
+        if use_hourly:
+            # Already newest-per-hour and already SANE_RANGES-filtered in the
+            # Flink job, and with no point cap -- so a long window is not
+            # silently truncated the way the raw path truncates it.
+            return await couch.get_hourly_series(sid, stream, field, t0, t1)
         raw = await couch.get_series(sid, stream, field, limit)
         seen: dict = {}
         for pt in raw:
             ts, val = pt.get("ts"), pt.get("value")
             if ts is None or val is None:
+                continue
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                continue
+            if not (lo <= val <= hi):
                 continue
             b = (ts // 3600) * 3600
             if t0 <= b <= t1 and b not in seen:  # newest per hour per station
@@ -479,7 +505,8 @@ async def get_anomalies(
         # Sensor faults (999 °C and friends) inflate std, which compresses every
         # z-score toward zero -- so the faults rank as the top anomalies while
         # real ones are buried. Same filter the Trends digest already applies
-        # via _window_buckets; applying it here makes the two consistent.
+        # as the Flink job applies when building hourly: docs, so the two
+        # consumers of that rule stay consistent.
         if not (lo <= val <= hi):
             out_of_range += 1
             continue
@@ -624,25 +651,6 @@ HIGHLIGHT_MIN_SPAN_FRAC = 0.5
 _highlight_lock = asyncio.Lock()
 
 
-def _window_buckets(points: list, t0: int, t1: int, lo: float, hi: float) -> dict:
-    """{bucket_ts: value} for in-window, in-range points (newest per hour)."""
-    out = {}
-    for pt in points:
-        ts, val = pt.get("ts"), pt.get("value")
-        if ts is None or val is None:
-            continue
-        try:
-            val = float(val)
-        except (TypeError, ValueError):
-            continue
-        if not (lo <= val <= hi):
-            continue
-        b = (ts // 3600) * 3600
-        if t0 <= b <= t1:
-            out.setdefault(b, val)  # newest-first input ⇒ first seen is newest
-    return out
-
-
 def _series_stats(buckets: dict, hours: int, now_bucket: int):
     """Summarise one station's hourly series. Returns None if there is nothing usable.
 
@@ -694,26 +702,35 @@ def _rank(rows: list, key, reverse: bool = True, top_n: int = HIGHLIGHT_TOP_N) -
 
 
 async def _scan_network(couch: CouchClient, snapshot: list, t0: int, t1: int) -> list:
-    """Fetch + hourly-bucket every field for every station: [(meta, {field: {bucket: value}})]."""
-    limit = 1000  # the series view cap ≈ 7 days at 10-min cadence
-    sem = asyncio.Semaphore(24)
+    """Hourly buckets for every field of every station: [(meta, {field: {hour: value}})].
+
+    Reads phase 2's hourly: documents, which arrive already bucketed
+    newest-per-hour and already SANE_RANGES-filtered by the Flink job. So there
+    is no series fetch, no Python bucketing and no 1000-point cap -- the last of
+    which mattered, because at a 10-minute cadence 1000 points is barely the
+    168h window this scan needs.
+
+    Concurrency is per station but each station fans out one query per field, so
+    the in-flight request count is the semaphore times len(HIGHLIGHT_FIELDS).
+    Kept at 8 to stay well inside httpx's default 100-connection pool.
+    """
+    sem = asyncio.Semaphore(8)
 
     async def _one(item: dict):
         available = item.get("available") or []
         sid = item["id"]
-        raw: dict = {}
+        buckets: dict = {}
         async with sem:
             if "standard" in available:
-                raw = await couch.get_series_multi(sid, "standard", HIGHLIGHT_FIELDS["standard"], limit)
-            if "spec" in available and not raw.get("waveHeight"):
-                spec = await couch.get_series_multi(sid, "spec", HIGHLIGHT_FIELDS["spec"], limit)
-                raw["waveHeight"] = spec.get("waveHeight", [])
-        buckets = {}
-        for field, pts in raw.items():
-            lo, hi = SANE_RANGES[field]
-            b = _window_buckets(pts, t0, t1, lo, hi)
-            if b:
-                buckets[field] = b
+                got = await couch.get_hourly_multi(
+                    sid, "standard", HIGHLIGHT_FIELDS["standard"], t0, t1)
+                buckets = {f: b for f, b in got.items() if b}
+            # Wave height precedence: standard first, then spec (gotcha 5).
+            if "spec" in available and not buckets.get("waveHeight"):
+                spec = await couch.get_hourly_multi(
+                    sid, "spec", HIGHLIGHT_FIELDS["spec"], t0, t1)
+                if spec.get("waveHeight"):
+                    buckets["waveHeight"] = spec["waveHeight"]
         return item, buckets
 
     return await asyncio.gather(*[_one(s) for s in snapshot]) if snapshot else []

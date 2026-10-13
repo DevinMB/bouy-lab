@@ -4,6 +4,8 @@ from buoys.config import CFG
 
 log = logging.getLogger(__name__)
 
+HIGH_SENTINEL = "\ufff0"  # sorts above any printable _id
+
 DESIGN_DOC = {
     "_id": "_design/buoys",
     "views": {
@@ -68,7 +70,17 @@ class CouchClient:
             await self._client.aclose()
 
     def _url(self, path: str = "") -> str:
-        return f"{self._base}/{self._db}{path}"
+        return self._url_in(self._db, path)
+
+    def _url_in(self, database: str, path: str = "") -> str:
+        """Same server and credentials, a different database.
+
+        hourly: documents live in their own database so retention can be "drop
+        the database" rather than pruning millions of docs. Rather than thread a
+        second client through every call site, one client addresses the sibling
+        db -- same connection pool, same auth.
+        """
+        return f"{self._base}/{database}{path}"
 
     async def ensure_db_and_views(self) -> None:
         # Create database (ignore 412 = already exists)
@@ -208,22 +220,70 @@ class CouchClient:
         existed only to order documents by their id components, an _id range
         over the always-current primary index does the same job and is faster.
         """
+        return await self._all_docs_between(prefix, prefix + HIGH_SENTINEL,
+                                            descending, limit)
+
+    async def _all_docs_between(
+        self, lo: str, hi: str, descending: bool = False,
+        limit: int = None, database: str = None,
+    ) -> list:
+        """Fetch docs with lo <= _id <= hi off the primary index of `database`."""
         import json as _json
-        high = f"{prefix}\ufff0"
         params = {
-            "startkey": _json.dumps(high if descending else prefix),
-            "endkey": _json.dumps(prefix if descending else high),
+            "startkey": _json.dumps(hi if descending else lo),
+            "endkey": _json.dumps(lo if descending else hi),
             "include_docs": "true",
         }
         if descending:
             params["descending"] = "true"
         if limit is not None:
             params["limit"] = limit
-        resp = await self._client.get(self._url("/_all_docs"), params=params)
+        url = self._url_in(database, "/_all_docs") if database else self._url("/_all_docs")
+        resp = await self._client.get(url, params=params)
         if resp.status_code == 404:
             return []
         resp.raise_for_status()
         return [row["doc"] for row in resp.json().get("rows", []) if row.get("doc")]
+
+    async def get_hourly_series(
+        self, station_id: str, stream: str, field: str, t0: int, t1: int
+    ) -> dict:
+        """{hour: last} for one (station, stream, field) over [t0, t1].
+
+        `last` is the newest reading in the hour, which is exactly what the
+        trend code has always used ("newest per hour per station"). The hour is
+        the final _id segment and a fixed-width 10-digit epoch, so an _id range
+        IS an hour range -- the same invariant the obs: scans rest on.
+
+        Unlike get_series this has no point cap, so it does not silently
+        truncate long windows the way `min(1000, max(48, hours + 12))` does.
+        """
+        docs = await self._all_docs_between(
+            f"hourly:{station_id}:{stream}:{field}:{t0}",
+            f"hourly:{station_id}:{stream}:{field}:{t1}",
+            database=CFG.COUCHDB_HOURLY_DATABASE,
+        )
+        out = {}
+        for d in docs:
+            hour, last = d.get("hour"), d.get("last")
+            if hour is None or last is None:
+                continue
+            try:
+                out[hour] = float(last)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    async def get_hourly_multi(
+        self, station_id: str, stream: str, fields: list, t0: int, t1: int
+    ) -> dict:
+        """{field: {hour: last}} -- one range query per field, run concurrently."""
+        import asyncio as _asyncio
+        results = await _asyncio.gather(*[
+            self.get_hourly_series(station_id, stream, f, t0, t1) for f in fields
+        ])
+        return dict(zip(fields, results))
+
 
     async def get_all_latest(self) -> list:
         # Range scan rather than the `latest` view: the same documents, always

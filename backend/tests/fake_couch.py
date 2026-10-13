@@ -101,6 +101,39 @@ class FakeCouchClient:
                     out[f].append({"ts": o["ts"], "value": val})
         return out
 
+    async def get_hourly_series(self, station_id, stream, field, t0, t1) -> dict:
+        """{hour: last} derived from seeded obs docs the way the Flink job does.
+
+        Newest reading per hour, with SANE_RANGES applied first -- so a seeded
+        sensor fault is dropped here exactly as the real job drops it, and the
+        digest tests keep testing that behaviour rather than bypassing it.
+        """
+        from buoys.service import SANE_RANGES
+        lo, hi = SANE_RANGES.get(field, (float("-inf"), float("inf")))
+        prefix = f"obs:{station_id}:{stream}:"
+        obs = [d for _id, d in self._docs.items() if _id.startswith(prefix)]
+        obs.sort(key=lambda d: d.get("ts", 0), reverse=True)  # newest first
+        out = {}
+        for o in obs:
+            val = (o.get("values") or {}).get(field)
+            ts = o.get("ts")
+            if val is None or ts is None:
+                continue
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                continue
+            if not (lo <= val <= hi):
+                continue
+            hour = (ts // 3600) * 3600
+            if t0 <= hour <= t1 and hour not in out:
+                out[hour] = val
+        return out
+
+    async def get_hourly_multi(self, station_id, stream, fields, t0, t1) -> dict:
+        return {f: await self.get_hourly_series(station_id, stream, f, t0, t1)
+                for f in fields}
+
     async def get_trend(self, stream: str, field: str, t0: int, t1: int) -> list:
         """Hourly mean/min/max across all stations, mirroring the `trend` reduce view."""
         buckets: dict = {}
