@@ -274,6 +274,35 @@ class CouchClient:
                 continue
         return out
 
+    async def all_docs_rows(
+        self, startkey: str, endkey: str, database: str,
+        limit: int = None, inclusive_end: bool = True,
+    ) -> list:
+        """Raw _all_docs rows ({id, key, value: {rev}}) WITHOUT doc bodies.
+
+        For retention work: the id and current rev are all `_purge` needs, so
+        fetching bodies would multiply the transfer for nothing.
+        """
+        import json as _json
+        params = {"startkey": _json.dumps(startkey), "endkey": _json.dumps(endkey)}
+        if limit is not None:
+            params["limit"] = limit
+        if not inclusive_end:
+            params["inclusive_end"] = "false"
+        resp = await self._client.get(self._url_in(database, "/_all_docs"), params=params)
+        resp.raise_for_status()
+        return resp.json().get("rows", [])
+
+    async def purge(self, revs_by_id: dict, database: str) -> dict:
+        """POST /{db}/_purge -- removes documents outright, leaving no tombstone.
+
+        Callers must batch to the server's [purge] max_document_id_number
+        (default 100 ids per request).
+        """
+        resp = await self._client.post(self._url_in(database, "/_purge"), json=revs_by_id)
+        resp.raise_for_status()
+        return resp.json()
+
     async def get_daily_series(
         self, station_id: str, stream: str, field: str, d0: int, d1: int
     ) -> dict:

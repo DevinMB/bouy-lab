@@ -53,6 +53,12 @@ class Config:
     COUCHDB_HOURLY_DATABASE: str = "world_of_buoys_hourly"
     # daily: tier, kept forever -- serves research windows longer than 30 days.
     COUCHDB_DAILY_DATABASE: str = "world_of_buoys_daily"
+    # hourly: retention (buoys/retention.py). Purges hours older than this many
+    # days. Refuses anything under 31, since the API reads hourly: to 30 days.
+    RETENTION_HOURLY_DAYS: int = 90
+    RETENTION_INTERVAL_SECONDS: int = 86400
+    RETENTION_MAX_PER_RUN: int = 250000
+    RETENTION_DRY_RUN: bool = False
     SNAPSHOT_TTL_SECONDS: int = 60
     # The Trends digest scans every station's series; cache it much longer
     # than the snapshot (NDBC only updates every 30 min anyway).
@@ -93,6 +99,10 @@ def _load() -> Config:
         INGEST_BACKFILL_ROWS=int(_env("INGEST_BACKFILL_ROWS", "120")),
         COUCHDB_HOURLY_DATABASE=_env("COUCHDB_HOURLY_DATABASE", "world_of_buoys_hourly"),
         COUCHDB_DAILY_DATABASE=_env("COUCHDB_DAILY_DATABASE", "world_of_buoys_daily"),
+        RETENTION_HOURLY_DAYS=int(_env("RETENTION_HOURLY_DAYS", "90")),
+        RETENTION_INTERVAL_SECONDS=int(_env("RETENTION_INTERVAL_SECONDS", "86400")),
+        RETENTION_MAX_PER_RUN=int(_env("RETENTION_MAX_PER_RUN", "250000")),
+        RETENTION_DRY_RUN=_env("RETENTION_DRY_RUN", "false").lower() in ("1", "true", "yes"),
         SNAPSHOT_TTL_SECONDS=int(_env("SNAPSHOT_TTL_SECONDS", "60")),
         HIGHLIGHTS_TTL_SECONDS=int(_env("HIGHLIGHTS_TTL_SECONDS", "600")),
         FRESH_WINDOW_HOURS=int(_env("FRESH_WINDOW_HOURS", "24")),
