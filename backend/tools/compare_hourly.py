@@ -4,9 +4,17 @@ Run before switching any read path onto `hourly:` (docs/flink-migration.md).
 
 Three computations over the same stations and window:
 
-    A  old        service._trend_from_stations -- the real code, unfiltered
+    A  old        service._trend_from_stations -- the real code, as deployed
     B  old+filter the same, with SANE_RANGES applied per reading
+    B2 uncapped    B with the per-station series cap lifted (limit=1000)
     C  new        aggregated from hourly: docs' `last` field
+
+C is compared against B2, not B. The old path fetches at most
+`min(1000, max(48, hours + 12))` points per station, which at a 10-minute
+cadence is about 10 hours of history for a 48-hour request -- so its older
+buckets are built from a shrinking subset of stations. hourly: has no such
+limit. Comparing C against B would therefore report the old path's truncation
+as a Flink defect, which is backwards.
 
 C should equal B exactly: Flink filters SANE_RANGES before aggregating, so the
 new path is the sanitised one. C differing from A is therefore expected, and
@@ -138,19 +146,23 @@ async def main():
         limit = min(1000, max(48, args.hours + 12))
         print(f"{args.stream}:{args.field} over {args.hours}h, {len(ids)} station(s)")
 
+        print(f"old path series cap: {limit} points/station"
+              f" (~{limit / 6:.0f}h at a 10-minute cadence)")
         A = summarise(await old_buckets(couch, ids, args.stream, args.field, t0, t1, limit, sane=False))
         B = summarise(await old_buckets(couch, ids, args.stream, args.field, t0, t1, limit, sane=True))
+        B2 = summarise(await old_buckets(couch, ids, args.stream, args.field, t0, t1, 1000, sane=True))
         C = summarise(await hourly_buckets(hourly, ids, args.stream, args.field, t0, t1))
 
         n_ab = diff("A(old)", A, "B(old+filter)", B)
-        n_bc = diff("B(old+filter)", B, "C(hourly)", C)
-        n_ac = diff("A(old)", A, "C(hourly)", C)
+        n_bb2 = diff("B(capped)", B, "B2(uncapped)", B2)
+        n_v = diff("B2(uncapped)", B2, "C(hourly)", C)
 
-        print(f"\n{'PASS' if n_bc == 0 else 'FAIL'}: hourly: matches the filtered old"
-              f" computation in {len(B)} bucket(s)" if n_bc == 0 else
-              f"\nFAIL: hourly: differs from the filtered old computation in {n_bc} place(s)")
-        print(f"note: {n_ab} difference(s) between A and B are the SANE_RANGES filter alone,")
-        print(f"      which is the behaviour change switching this read path introduces.")
-        return 1 if n_bc else 0
+        print(f"\n{'PASS' if n_v == 0 else 'FAIL'}: hourly: vs the uncapped filtered old"
+              f" computation -- {n_v} unexplained difference(s) over {len(B2)} bucket(s)")
+        print(f"  {n_ab} difference(s) from SANE_RANGES alone"
+              f" -- a behaviour change the switch introduces")
+        print(f"  {n_bb2} difference(s) from the old path's series cap"
+              f" -- a pre-existing bug the switch FIXES")
+        return 1 if n_v else 0
 
 sys.exit(asyncio.run(main()))
