@@ -32,7 +32,13 @@ const WINDOWS = [
   { label: '7d', hours: 168 },
   { label: '14d', hours: 336 },
   { label: '30d', hours: 720 },
+  // Trend mode only. Longer windows are served at daily resolution and plot a
+  // daily MEAN (see LONG_WINDOW_HOURS in service.py); the other modes read raw
+  // series under a 1000-point cap and stay at 30 days.
+  { label: '90d', hours: 2160, trendOnly: true },
+  { label: '1y', hours: 8760, trendOnly: true },
 ]
+const LONG_WINDOW_HOURS = 720
 
 function convert(v, unit, useMetric) {
   if (v == null) return null
@@ -54,6 +60,12 @@ function unitLabel(unit, useMetric) {
     case 'pressure': return useMetric ? 'hPa' : 'inHg'
     default: return ''
   }
+}
+
+function fmtDay(ts) {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return `${(d.getUTCMonth() + 1).toString().padStart(2, '0')}/${d.getUTCDate().toString().padStart(2, '0')}`
 }
 
 function fmtTs(ts) {
@@ -98,6 +110,11 @@ export default function Research({ buoys, useMetric, researchRegion, scope, onSc
   const [enabled, setEnabled] = useState(DEFAULT_ENABLED)
   const [singleMetricKey, setSingleMetricKey] = useState(propagationRequest?.metricKey || METRICS[0].key)
 
+  // The 90d/1y windows exist only in trend mode; leaving it clamps back to 30d.
+  useEffect(() => {
+    if (mode !== 'trend' && hours > LONG_WINDOW_HOURS) setHours(LONG_WINDOW_HOURS)
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Consume the request once so manual visits to this tab start fresh.
   useEffect(() => {
     if (propagationRequest) onConsumePropagationRequest?.()
@@ -124,7 +141,7 @@ export default function Research({ buoys, useMetric, researchRegion, scope, onSc
 
         {showWindow && (
           <div style={{ display: 'flex', gap: '0.25rem' }}>
-            {WINDOWS.map((w) => (
+            {WINDOWS.filter((w) => !w.trendOnly || mode === 'trend').map((w) => (
               <button key={w.hours} onClick={() => setHours(w.hours)}
                 className={`btn${hours === w.hours ? ' btn-amber' : ''}`} style={{ padding: '0.375rem 0.625rem' }}>
                 {w.label}
@@ -344,9 +361,14 @@ function TrendRow({ metric, hours, useMetric, scope, region, buoys, onHide }) {
   const ulabel = unitLabel(metric.unit, useMetric)
   const peakCount = data.reduce((m, d) => Math.max(m, d.count), 0)
   const color = metric.color || '#3b82f6'
+  // Long windows plot a daily MEAN rather than the newest reading per hour.
+  // That change of quantity is deliberate, so it is labelled, not left to be
+  // discovered by someone comparing a 30d chart against a 90d one.
+  const daily = meta?.resolution === 'day'
+  const fmtX = daily ? fmtDay : fmtTs
   const countLabel = scope === 'region'
     ? `${meta?.contributing ?? meta?.stationCount ?? '…'} buoys in selection`
-    : `up to ${peakCount} buoys/hr`
+    : daily ? `up to ${peakCount} readings/day` : `up to ${peakCount} buoys/hr`
 
   return (
     <div className="ops-section">
@@ -354,6 +376,12 @@ function TrendRow({ metric, hours, useMetric, scope, region, buoys, onHide }) {
         <span>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: color, marginRight: 6 }} />
           {metric.label} <span style={{ color: 'var(--color-text-dim)' }}>· {countLabel}</span>
+          {daily && (
+            <span className="count-chip" style={{ marginLeft: 6 }}
+              title="Windows over 30 days are summarised by UTC day: each point is the mean of every reading that day, weighted by reading count. Shorter windows plot the newest reading per hour.">
+              daily mean
+            </span>
+          )}
         </span>
         <button onClick={onHide} title="Hide this metric"
           style={{ background: 'none', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1 }}>✕</button>
@@ -365,7 +393,7 @@ function TrendRow({ metric, hours, useMetric, scope, region, buoys, onHide }) {
         {!loading && !error && data.length > 0 && (
           <ResponsiveContainer width="100%" height={200}>
             <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
-              <XAxis dataKey="ts" tickFormatter={fmtTs}
+              <XAxis dataKey="ts" tickFormatter={fmtX}
                 tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
                 tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={40} />
               <YAxis tick={{ fontSize: 9, fill: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}
@@ -373,10 +401,10 @@ function TrendRow({ metric, hours, useMetric, scope, region, buoys, onHide }) {
                 label={{ value: ulabel, angle: -90, position: 'insideLeft', fontSize: 9, fill: 'var(--color-text-dim)' }} />
               <Tooltip
                 contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.6875rem', fontFamily: 'var(--font-mono)' }}
-                labelFormatter={fmtTs}
+                labelFormatter={fmtX}
                 formatter={(val, name) => name === 'band'
                   ? [`${val[0]?.toFixed(1)}–${val[1]?.toFixed(1)} ${ulabel}`, 'min–max']
-                  : [`${val?.toFixed(1)} ${ulabel}`, 'mean']} />
+                  : [`${val?.toFixed(1)} ${ulabel}`, daily ? 'daily mean' : 'mean']} />
               <Area dataKey="band" stroke="none" fill={color} fillOpacity={0.15} isAnimationActive={false} />
               <Line dataKey="mean" stroke={color} strokeWidth={1.75} dot={false} isAnimationActive={false} />
             </ComposedChart>

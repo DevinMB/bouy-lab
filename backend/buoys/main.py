@@ -167,7 +167,7 @@ async def get_stats():
 async def research_trend(
     stream: str = Query(...),
     field: str = Query(...),
-    hours: int = Query(default=120, ge=6, le=720),
+    hours: int = Query(default=120, ge=6, le=8760),
 ):
     couch = _get_couch()
     cache = _get_cache()
@@ -179,7 +179,7 @@ async def research_trend_stations(
     stream: str = Query(...),
     field: str = Query(...),
     stations: str = Query(..., description="Comma-separated station IDs (e.g. buoys inside a drawn shape)"),
-    hours: int = Query(default=120, ge=6, le=720),
+    hours: int = Query(default=120, ge=6, le=8760),
 ):
     couch = _get_couch()
     cache = _get_cache()

@@ -51,6 +51,8 @@ class Config:
     # they are a rebuildable cache, so retention is dropping the db rather than
     # pruning millions of documents. See docs/flink-migration.md.
     COUCHDB_HOURLY_DATABASE: str = "world_of_buoys_hourly"
+    # daily: tier, kept forever -- serves research windows longer than 30 days.
+    COUCHDB_DAILY_DATABASE: str = "world_of_buoys_daily"
     SNAPSHOT_TTL_SECONDS: int = 60
     # The Trends digest scans every station's series; cache it much longer
     # than the snapshot (NDBC only updates every 30 min anyway).
@@ -90,6 +92,7 @@ def _load() -> Config:
         INGEST_MAX_CONCURRENCY=int(_env("INGEST_MAX_CONCURRENCY", "16")),
         INGEST_BACKFILL_ROWS=int(_env("INGEST_BACKFILL_ROWS", "120")),
         COUCHDB_HOURLY_DATABASE=_env("COUCHDB_HOURLY_DATABASE", "world_of_buoys_hourly"),
+        COUCHDB_DAILY_DATABASE=_env("COUCHDB_DAILY_DATABASE", "world_of_buoys_daily"),
         SNAPSHOT_TTL_SECONDS=int(_env("SNAPSHOT_TTL_SECONDS", "60")),
         HIGHLIGHTS_TTL_SECONDS=int(_env("HIGHLIGHTS_TTL_SECONDS", "600")),
         FRESH_WINDOW_HOURS=int(_env("FRESH_WINDOW_HOURS", "24")),

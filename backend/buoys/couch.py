@@ -274,6 +274,32 @@ class CouchClient:
                 continue
         return out
 
+    async def get_daily_series(
+        self, station_id: str, stream: str, field: str, d0: int, d1: int
+    ) -> dict:
+        """{day: (nInDay, meanInDay)} for one (station, stream, field) over [d0, d1].
+
+        `day` is UTC midnight in epoch seconds and the final _id segment, so the
+        _id range is a day range. meanInDay is a true mean over every reading
+        that day (Flink builds it from raw readings, not from hourly means);
+        nInDay is returned alongside so callers can combine days weighted by n.
+        """
+        docs = await self._all_docs_between(
+            f"daily:{station_id}:{stream}:{field}:{d0}",
+            f"daily:{station_id}:{stream}:{field}:{d1}",
+            database=CFG.COUCHDB_DAILY_DATABASE,
+        )
+        out = {}
+        for d in docs:
+            day, mean, n = d.get("day"), d.get("meanInDay"), d.get("nInDay")
+            if day is None or mean is None or not n:
+                continue
+            try:
+                out[day] = (int(n), float(mean))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     async def get_hourly_multi(
         self, station_id: str, stream: str, fields: list, t0: int, t1: int
     ) -> dict:

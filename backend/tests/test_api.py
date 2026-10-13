@@ -338,3 +338,66 @@ async def test_anomalies_staleness_uses_the_streams_own_ts():
         std = (await c.get("/api/research/anomalies?stream=standard&field=waterTemperature")).json()
         assert "MIX" in [a["id"] for a in std["anomalies"]], "live standard feed wrongly dropped"
         assert std["n"] == 4
+
+
+# ── long research windows: daily resolution ──────────────────────────────────
+
+def test_days_combine_weighted_by_count_not_mean_of_means():
+    """A day's mean must weight each hour by its reading count.
+
+    One reading of 10 and three readings of 20 is a day mean of 17.5. Averaging
+    the two hourly means would give 15 -- wrong whenever reporting cadence
+    varies within a day, which on this network it routinely does.
+    """
+    from buoys.service import _hours_to_days
+    day = 1791763200  # a UTC midnight
+    out = _hours_to_days([
+        {"ts": day + 3600, "mean": 10.0, "min": 10.0, "max": 10.0, "count": 1},
+        {"ts": day + 7200, "mean": 20.0, "min": 19.0, "max": 21.0, "count": 3},
+    ])
+    assert len(out) == 1
+    assert out[0]["ts"] == day
+    assert out[0]["mean"] == 17.5
+    assert (out[0]["min"], out[0]["max"], out[0]["count"]) == (10.0, 21.0, 4)
+
+
+def _obs(sid, ts, temp):
+    return {"_id": f"obs:{sid}:standard:{ts}", "type": "observation", "stationId": sid,
+            "stream": "standard", "ts": ts, "values": {"waterTemperature": temp}}
+
+
+@pytest.mark.asyncio
+async def test_long_windows_report_daily_resolution(client):
+    now = int(time.time())
+    main_module._couch.seed([_obs("D1", now - k * 3600, 20.0 + k % 3) for k in range(0, 72, 2)])
+    short = (await client.get("/api/research/trend?stream=standard&field=waterTemperature&hours=168")).json()
+    long_ = (await client.get("/api/research/trend?stream=standard&field=waterTemperature&hours=2160")).json()
+    assert short["resolution"] == "hour"
+    assert long_["resolution"] == "day"
+    # daily buckets land on UTC midnights
+    assert long_["points"] and all(p["ts"] % 86400 == 0 for p in long_["points"])
+
+
+@pytest.mark.asyncio
+async def test_regional_long_window_reads_daily_mean(client):
+    """>30 days reads daily: and plots meanInDay -- not the newest reading."""
+    now = int(time.time())
+    today = now - now % 86400
+    # Same station, same day: readings 10, 20, 30. Newest is 30; the mean is 20.
+    main_module._couch.seed([_obs("R1", today + 600 * k, v) for k, v in enumerate((10.0, 20.0, 30.0))])
+    data = (await client.get(
+        "/api/research/trend_stations?stream=standard&field=waterTemperature&hours=2160&stations=R1")).json()
+    assert data["resolution"] == "day"
+    pt = next(p for p in data["points"] if p["ts"] == today)
+    assert pt["mean"] == 20.0, "long windows must plot the daily MEAN, not the newest reading"
+
+
+@pytest.mark.asyncio
+async def test_long_windows_only_on_trend_endpoints(client):
+    """correlate/teleconnections/propagation read raw series under the 1000-point
+    cap, so a year window there would be silently truncated. They stay at 720h."""
+    ok = await client.get("/api/research/trend?stream=standard&field=waterTemperature&hours=8760")
+    bad = await client.get("/api/research/correlate?stream=standard&field=waterTemperature"
+                           "&stations=A,B,C&hours=8760")
+    assert ok.status_code == 200
+    assert bad.status_code == 422

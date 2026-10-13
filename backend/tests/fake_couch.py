@@ -130,6 +130,25 @@ class FakeCouchClient:
                 out[hour] = val
         return out
 
+    async def get_daily_series(self, station_id, stream, field, d0, d1) -> dict:
+        """{day: (n, meanInDay)} from seeded obs, the way buoys_daily builds it:
+        a true mean over every in-range reading of the UTC day."""
+        from buoys.service import SANE_RANGES
+        lo, hi = SANE_RANGES.get(field, (float("-inf"), float("inf")))
+        prefix = f"obs:{station_id}:{stream}:"
+        acc = {}
+        for _id, o in self._docs.items():
+            if not _id.startswith(prefix):
+                continue
+            val, ts = (o.get("values") or {}).get(field), o.get("ts")
+            if val is None or ts is None or not (lo <= float(val) <= hi):
+                continue
+            day = ts - ts % 86400
+            if d0 <= day <= d1:
+                n, total = acc.get(day, (0, 0.0))
+                acc[day] = (n + 1, total + float(val))
+        return {day: (n, total / n) for day, (n, total) in acc.items()}
+
     async def get_hourly_multi(self, station_id, stream, fields, t0, t1) -> dict:
         return {f: await self.get_hourly_series(station_id, stream, f, t0, t1)
                 for f in fields}

@@ -120,7 +120,16 @@ async def get_trend(
     t1 = int(time.time())
     t0 = t1 - hours * 3600
     points = await couch.get_trend(stream, field, t0, t1)
-    result = {"stream": stream, "field": field, "hours": hours, "points": points}
+    resolution = trend_resolution(hours)
+    if resolution == "day":
+        # The view's _stats rows carry count and mean per hour, so sum = mean *
+        # count is exact and a day's mean is sum(sum) / sum(count) -- precisely
+        # the weight-by-n rule, over every reading. Served from the view rather
+        # than daily: because the view already spans all raw history (back to
+        # 2026-04-26) while daily: only holds what Flink has replayed.
+        points = _hours_to_days(points)
+    result = {"stream": stream, "field": field, "hours": hours, "points": points,
+              "resolution": resolution}
     cache.set(key, result)
     return result
 
@@ -128,6 +137,17 @@ async def get_trend(
 # Cap on how many in-region buoys we fetch series for, to bound the per-request
 # cost of a large drawn selection.
 MAX_REGION_STATIONS = 80
+
+# Research trend windows longer than this are served at DAILY resolution and
+# plot a daily MEAN rather than the newest-per-hour value. Decided 2026-10-13:
+# the change of quantity at this boundary is deliberate, and the response says
+# so via `resolution` so the UI can label it rather than let it be discovered.
+LONG_WINDOW_HOURS = 720
+DAY = 86400
+
+
+def trend_resolution(hours: int) -> str:
+    return "day" if hours > LONG_WINDOW_HOURS else "hour"
 
 # The (stream, field) pairs phase 2's Flink job materialises as hourly: docs --
 # exactly Research.jsx's METRICS. Anything outside this set still works: the
@@ -140,6 +160,22 @@ HOURLY_PAIRS = {
     ("spec", "waveHeight"), ("spec", "swellHeight"),
     ("srad", "solarRadiation"), ("ocean", "waterTemperature"),
 }
+
+
+def _hours_to_days(points: list) -> list:
+    """Collapse hourly {ts, mean, min, max, count} rows into UTC days, weighted by count."""
+    days: dict = {}
+    for p in points:
+        ts, cnt = p.get("ts"), p.get("count") or 0
+        if ts is None or not cnt:
+            continue
+        d = days.setdefault(ts - ts % DAY, {"sum": 0.0, "count": 0, "min": None, "max": None})
+        d["sum"] += p["mean"] * cnt
+        d["count"] += cnt
+        d["min"] = p["min"] if d["min"] is None else min(d["min"], p["min"])
+        d["max"] = p["max"] if d["max"] is None else max(d["max"], p["max"])
+    return [{"ts": day, "mean": v["sum"] / v["count"], "min": v["min"], "max": v["max"],
+             "count": v["count"]} for day, v in sorted(days.items())]
 
 
 async def _trend_from_stations(
@@ -157,7 +193,15 @@ async def _trend_from_stations(
     # Only the fallback needs a point cap; hourly: has none, which is the point.
     limit = min(1000, max(48, hours + 12))
 
+    daily = trend_resolution(hours) == "day"
+
     async def _station_buckets(sid: str) -> dict:
+        if daily and use_hourly:  # the daily tier covers the same ten pairs
+            # One value per station per day: its meanInDay. Stations then count
+            # equally across the region, exactly as they do per hour.
+            got = await couch.get_daily_series(sid, stream, field,
+                                               t0 - t0 % DAY, t1 - t1 % DAY)
+            return {day: mean for day, (n, mean) in got.items()}
         if use_hourly:
             # Already newest-per-hour and already SANE_RANGES-filtered in the
             # Flink job, and with no point cap -- so a long window is not
@@ -175,8 +219,12 @@ async def _trend_from_stations(
                 continue
             if not (lo <= val <= hi):
                 continue
-            b = (ts // 3600) * 3600
-            if t0 <= b <= t1 and b not in seen:  # newest per hour per station
+            size = DAY if daily else 3600
+            b = (ts // size) * size
+            # Daily includes the (partial) day containing t0, matching the
+            # daily: path's d0; hourly keeps its original t0 <= b bound.
+            lo_b = t0 - t0 % DAY if daily else t0
+            if lo_b <= b <= t1 and b not in seen:  # newest per bucket per station
                 seen[b] = val
         return seen
 
@@ -219,6 +267,7 @@ async def get_trend_by_stations(
         "contributing": contributing,
         "requested": requested,
         "capped": requested > len(used),
+        "resolution": trend_resolution(hours),
     }
     cache.set(key, result)
     return result
