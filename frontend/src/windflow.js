@@ -140,9 +140,11 @@ export const WindFlowLayer = L.Layer.extend({
     this._canvas.style.pointerEvents = 'none'
     map.getPanes().overlayPane.appendChild(this._canvas) // under the markers
     this._ctx = this._canvas.getContext('2d')
-    map.on('moveend', this._reset, this)
+    map.on('movestart', this._onMoveStart, this)
+    map.on('moveend', this._onMoveEnd, this)
     map.on('resize', this._reset, this)
     map.on('zoomstart', this._clear, this)
+    this._moving = false
     this._reset()
     this._last = performance.now()
     this._raf = requestAnimationFrame(this._frame.bind(this))
@@ -150,12 +152,22 @@ export const WindFlowLayer = L.Layer.extend({
 
   onRemove(map) {
     cancelAnimationFrame(this._raf)
-    map.off('moveend', this._reset, this)
+    map.off('movestart', this._onMoveStart, this)
+    map.off('moveend', this._onMoveEnd, this)
     map.off('resize', this._reset, this)
     map.off('zoomstart', this._clear, this)
     this._canvas.remove()
     this._map = null
   },
+
+  // The canvas sits in the overlay pane, which Leaflet translates while the map
+  // is dragged -- but particles are drawn at CONTAINER positions. Drawing
+  // mid-drag therefore landed every new stroke offset by the drag distance and
+  // smeared the streams across the map. So: freeze while moving (the image
+  // slides with the map, locked to geography, like the tiles), then realign and
+  // resume when the move ends.
+  _onMoveStart() { this._moving = true },
+  _onMoveEnd() { this._moving = false; this._reset() },
 
   _clear() {
     if (this._ctx) this._ctx.clearRect(0, 0, this._canvas.width, this._canvas.height)
@@ -220,7 +232,7 @@ export const WindFlowLayer = L.Layer.extend({
 
   _frame(t) {
     this._raf = requestAnimationFrame(this._frame.bind(this))
-    if (!this._map || this._reduceMotion || !this._visible()) return
+    if (!this._map || this._reduceMotion || this._moving || !this._visible()) return
     const dt = Math.min(3, (t - this._last) / 16.67) // in 60 fps frames
     this._last = t
     this._step(dt, true)

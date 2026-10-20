@@ -102,7 +102,8 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   const [drawing, setDrawing] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false) // mobile drawer toggle
   const windRef = useRef(null)
-  const [windOn, setWindOn] = useState(true)
+  // Off on every load: it looks good but is a lot to open to. Not persisted.
+  const [windOn, setWindOn] = useState(false)
   const [windStations, setWindStations] = useState(0)
   const isNarrow = useIsNarrow()
 
