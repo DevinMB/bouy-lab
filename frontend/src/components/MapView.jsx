@@ -4,6 +4,7 @@ import { corrColor, corrGradient } from '../correlation'
 import { pointInPolygon } from '../geo'
 import { useIsNarrow } from '../hooks'
 import FilterRail from './FilterRail'
+import { WindFlowLayer, WIND_LEGEND } from '../windflow'
 
 // Active correlation overlay (module-scoped so the cluster icon function, which
 // is registered once at map init, can read the current value). null = off.
@@ -100,6 +101,9 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   const [filters, setFilters] = useState({ text: '', streams: [], reportingOnly: false })
   const [drawing, setDrawing] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false) // mobile drawer toggle
+  const windRef = useRef(null)
+  const [windOn, setWindOn] = useState(true)
+  const [windStations, setWindStations] = useState(0)
   const isNarrow = useIsNarrow()
 
   // Initialize map once
@@ -315,6 +319,24 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
         && pointInPolygon(b.lat, b.lon, researchRegion.points)).length
     : 0
 
+  // Wind flow overlay. Fed from the same snapshot as the markers; the layer
+  // pauses itself while this tab is hidden.
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map) return
+    if (!windRef.current) windRef.current = new WindFlowLayer()
+    const layer = windRef.current
+    if (windOn) {
+      if (!map.hasLayer(layer)) layer.addTo(map)
+      setWindStations(layer.setBuoys(buoys || []))
+    } else if (map.hasLayer(layer)) {
+      map.removeLayer(layer)
+    }
+    // Let the flow lead: buoy markers step back while it is on.
+    const pane = map.getPane('markerPane')
+    if (pane) pane.style.opacity = windOn ? '0.55' : '1'
+  }, [windOn, buoys])
+
   return (
     <div style={{ position: 'relative', height: '100%' }}>
       <div ref={mapRef} style={{ position: 'absolute', inset: 0, cursor: drawing ? 'crosshair' : '' }} />
@@ -370,6 +392,27 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
           onFiltersChange={setFilters}
           useMetric={useMetric}
         />
+
+        {/* Wind flow overlay control */}
+        <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: windOn ? '0.5rem' : 0 }}>
+            <span style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)' }}>Wind flow</span>
+            <button className={`btn${windOn ? ' btn-amber' : ''}`} onClick={() => setWindOn((v) => !v)} style={{ padding: '0.15rem 0.5rem', fontSize: '0.6875rem' }}>
+              {windOn ? 'On' : 'Off'}
+            </button>
+          </div>
+          {windOn && (
+            <>
+              <div style={{ height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${WIND_LEGEND.map(([v, c]) => `${c} ${(v / 22) * 100}%`).join(', ')})` }} />
+              <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-dim)', marginTop: 2, fontSize: '0.625rem' }}>
+                <span>calm</span><span>{useMetric ? '22+ m/s' : '49+ mph'}</span>
+              </div>
+              <div style={{ color: 'var(--color-text-dim)', marginTop: '0.4rem', lineHeight: 1.4 }}>
+                Live wind from {windStations} buoys reporting in the last 3 h. Streams fade with distance from a buoy — dark water is unmeasured, not calm.
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Research region control */}
         <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>

@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
 import { units as U } from '../api'
 import { useIsNarrow } from '../hooks'
+
+// The CDN Leaflet global, as MapView uses -- importing the npm package would
+// overwrite window.L and strip the markercluster plugin from the main map.
+const L = window.L
 
 // Stories: precomputed storm narratives (backend/tools/build_story.py) played
 // back as an animation on a map. Playback never touches the API -- each story is

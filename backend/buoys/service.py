@@ -46,6 +46,11 @@ def _doc_to_snapshot_item(doc: dict) -> dict:
             "waterTempC": doc.get("waterTempC"),
             "observedAt": doc.get("observedAt"),
             "windSpeed": std.get("windSpeed"),
+            # Direction the wind blows FROM, degrees true (NDBC WDIR), plus the
+            # standard stream's own timestamp: the wind-flow overlay draws only
+            # fresh wind, and observedAt above may come from a different stream.
+            "windDirection": std.get("windDirection"),
+            "windTs": streams.get("standard", {}).get("ts"),
             "gustSpeed": std.get("gustSpeed"),
             "waveHeight": wave_height,
             "pressure": std.get("pressure"),
