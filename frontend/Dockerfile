@@ -2,8 +2,13 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-COPY package.json .
-RUN npm install
+# Install from the committed lockfile. Without one, every build resolved
+# whatever the registry served that day -- which is how a dependency published
+# around 2026-10-20 began crashing npm 10.8's peer resolver ("Cannot read
+# properties of null (reading 'edgesOut')") and broke the build overnight. npm 11
+# carries the resolver fix; `npm ci` makes the build reproducible.
+COPY package.json package-lock.json ./
+RUN npx -y npm@11 ci
 
 COPY . .
 

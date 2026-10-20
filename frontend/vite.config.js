@@ -14,6 +14,8 @@ export default defineConfig({
           if (!id.includes('node_modules')) return
           if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'vendor-react'
           if (/node_modules[\\/](recharts|react-smooth|victory-vendor|d3-)/.test(id)) return 'vendor-recharts'
+          // Both MapView and Stories use Leaflet; one shared chunk, not a copy in each.
+          if (/node_modules[\\/]leaflet/.test(id)) return 'vendor-leaflet'
         },
       },
     },
