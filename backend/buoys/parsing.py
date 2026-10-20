@@ -36,6 +36,25 @@ def coerce_float(val: str):
         return None
 
 
+# 16-point compass -> degrees true. NDBC's realtime2 .spec files give swell and
+# wind-wave direction (SwD, WWD) as compass TEXT ("WNW"), not degrees -- unlike
+# MWD in the same file. Until 2026-10-20 both went through coerce_float and were
+# silently stored as null on every observation.
+COMPASS = {name: i * 22.5 for i, name in enumerate(
+    "N NNE NE ENE E ESE SE SSE S SSW SW WSW W WNW NW NNW".split())}
+
+
+def coerce_direction(val: str):
+    """Direction the waves come FROM, degrees true. Accepts compass text or degrees."""
+    if not val or val.strip() in ("MM", ""):
+        return None
+    v = val.strip().upper()
+    if v in COMPASS:
+        return COMPASS[v]
+    d = coerce_float(v)
+    return d % 360 if d is not None else None
+
+
 def parse_timestamp(yy: str, mo: str, dd: str, hh: str, mm: str) -> tuple:
     """Parse NDBC 5-column UTC timestamp into (epoch_seconds, iso8601).
 
@@ -116,8 +135,8 @@ def parse_spec_row(row: list) -> dict:
         "swellPeriod": coerce_float(row[7]),
         "windWaveHeight": coerce_float(row[8]),
         "windWavePeriod": coerce_float(row[9]),
-        "swellDirection": coerce_float(row[10]) if len(row) > 10 else None,
-        "windWaveDirection": coerce_float(row[11]) if len(row) > 11 else None,
+        "swellDirection": coerce_direction(row[10]) if len(row) > 10 else None,
+        "windWaveDirection": coerce_direction(row[11]) if len(row) > 11 else None,
         "steepness": row[12].strip() if len(row) > 12 else None,
         "averageWavePeriod": coerce_float(row[13]) if len(row) > 13 else None,
         "meanWaveDirection": coerce_float(row[14]) if len(row) > 14 else None,

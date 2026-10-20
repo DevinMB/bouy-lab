@@ -6,7 +6,6 @@ const Trends = lazy(() => import('./components/Trends'))
 const Operations = lazy(() => import('./components/Operations'))
 const Nearby = lazy(() => import('./components/Nearby'))
 const Research = lazy(() => import('./components/Research'))
-const Stories = lazy(() => import('./components/Stories'))
 
 const REFRESH_INTERVAL = 60_000
 
@@ -152,7 +151,7 @@ export default function App() {
       </header>
 
       <nav className="tab-bar">
-        {['map', 'stories', 'trends', 'operations', 'nearby', 'research'].map((t) => (
+        {['map', 'trends', 'operations', 'nearby', 'research'].map((t) => (
           <div
             key={t}
             className={`tab${tab === t ? ' active' : ''}`}
@@ -185,12 +184,6 @@ export default function App() {
             />
           </Suspense>
         </div>
-
-        {tab === 'stories' && (
-          <Suspense fallback={<div className="loading-veil">Loading stories…</div>}>
-            <Stories useMetric={useMetric} />
-          </Suspense>
-        )}
 
         {tab === 'trends' && (
           <Suspense fallback={<div className="loading-veil">Loading trends…</div>}>

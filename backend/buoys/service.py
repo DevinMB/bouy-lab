@@ -51,6 +51,13 @@ def _doc_to_snapshot_item(doc: dict) -> dict:
             # fresh wind, and observedAt above may come from a different stream.
             "windDirection": std.get("windDirection"),
             "windTs": streams.get("standard", {}).get("ts"),
+            # Swell for the flow overlay: direction FROM (degrees true, parsed
+            # from NDBC compass text), height, period -- with the spec stream's
+            # own ts for freshness.
+            "swellDirection": spec.get("swellDirection"),
+            "swellHeight": spec.get("swellHeight"),
+            "swellPeriod": spec.get("swellPeriod"),
+            "swellTs": streams.get("spec", {}).get("ts"),
             "gustSpeed": std.get("gustSpeed"),
             "waveHeight": wave_height,
             "pressure": std.get("pressure"),

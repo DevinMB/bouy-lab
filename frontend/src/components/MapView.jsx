@@ -4,7 +4,7 @@ import { corrColor, corrGradient } from '../correlation'
 import { pointInPolygon } from '../geo'
 import { useIsNarrow } from '../hooks'
 import FilterRail from './FilterRail'
-import { WindFlowLayer, WIND_LEGEND } from '../windflow'
+import { FlowLayer, FLOW_KINDS } from '../flow'
 
 // Active correlation overlay (module-scoped so the cluster icon function, which
 // is registered once at map init, can read the current value). null = off.
@@ -101,10 +101,11 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
   const [filters, setFilters] = useState({ text: '', streams: [], reportingOnly: false })
   const [drawing, setDrawing] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false) // mobile drawer toggle
-  const windRef = useRef(null)
-  // Off on every load: it looks good but is a lot to open to. Not persisted.
-  const [windOn, setWindOn] = useState(false)
-  const [windStations, setWindStations] = useState(0)
+  const flowRef = useRef(null)
+  // Flow overlay: null (off) | 'wind' | 'swell'. Off on every load -- it looks
+  // good but is a lot to open to. Not persisted.
+  const [flowKind, setFlowKind] = useState(null)
+  const [flowStations, setFlowStations] = useState(0)
   const isNarrow = useIsNarrow()
 
   // Initialize map once
@@ -320,23 +321,25 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
         && pointInPolygon(b.lat, b.lon, researchRegion.points)).length
     : 0
 
-  // Wind flow overlay. Fed from the same snapshot as the markers; the layer
-  // pauses itself while this tab is hidden.
+  // Flow overlay (wind or swell). Fed from the same snapshot as the markers --
+  // no extra requests; the layer pauses itself while this tab is hidden and is
+  // not added at all while off.
   useEffect(() => {
     const map = mapInstanceRef.current
     if (!map) return
-    if (!windRef.current) windRef.current = new WindFlowLayer()
-    const layer = windRef.current
-    if (windOn) {
+    if (flowKind) {
+      if (!flowRef.current) flowRef.current = new FlowLayer(flowKind)
+      const layer = flowRef.current
+      if (layer._kind !== FLOW_KINDS[flowKind]) layer.setKind(flowKind)
       if (!map.hasLayer(layer)) layer.addTo(map)
-      setWindStations(layer.setBuoys(buoys || []))
-    } else if (map.hasLayer(layer)) {
-      map.removeLayer(layer)
+      setFlowStations(layer.setBuoys(buoys || []))
+    } else if (flowRef.current && map.hasLayer(flowRef.current)) {
+      map.removeLayer(flowRef.current)
     }
     // Let the flow lead: buoy markers step back while it is on.
     const pane = map.getPane('markerPane')
-    if (pane) pane.style.opacity = windOn ? '0.55' : '1'
-  }, [windOn, buoys])
+    if (pane) pane.style.opacity = flowKind ? '0.55' : '1'
+  }, [flowKind, buoys])
 
   return (
     <div style={{ position: 'relative', height: '100%' }}>
@@ -394,25 +397,37 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
           useMetric={useMetric}
         />
 
-        {/* Wind flow overlay control */}
+        {/* Flow overlay control */}
         <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: windOn ? '0.5rem' : 0 }}>
-            <span style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)' }}>Wind flow</span>
-            <button className={`btn${windOn ? ' btn-amber' : ''}`} onClick={() => setWindOn((v) => !v)} style={{ padding: '0.15rem 0.5rem', fontSize: '0.6875rem' }}>
-              {windOn ? 'On' : 'Off'}
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: flowKind ? '0.5rem' : 0 }}>
+            <span style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)' }}>Flow</span>
+            <div style={{ display: 'flex', gap: 2 }}>
+              {[[null, 'Off'], ['wind', 'Wind'], ['swell', 'Swell']].map(([k, label]) => (
+                <button key={label} className={`btn${flowKind === k ? ' btn-amber' : ''}`} onClick={() => setFlowKind(k)}
+                  style={{ padding: '0.15rem 0.45rem', fontSize: '0.6875rem' }}>{label}</button>
+              ))}
+            </div>
           </div>
-          {windOn && (
-            <>
-              <div style={{ height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${WIND_LEGEND.map(([v, c]) => `${c} ${(v / 22) * 100}%`).join(', ')})` }} />
-              <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-dim)', marginTop: 2, fontSize: '0.625rem' }}>
-                <span>calm</span><span>{useMetric ? '22+ m/s' : '49+ mph'}</span>
-              </div>
-              <div style={{ color: 'var(--color-text-dim)', marginTop: '0.4rem', lineHeight: 1.4 }}>
-                Live wind from {windStations} buoys reporting in the last 3 h. Streams fade with distance from a buoy — dark water is unmeasured, not calm.
-              </div>
-            </>
-          )}
+          {flowKind && (() => {
+            const k = FLOW_KINDS[flowKind]
+            const top = flowKind === 'wind'
+              ? (useMetric ? '22+ m/s' : '49+ mph')
+              : (useMetric ? '5+ m' : '16+ ft')
+            return (
+              <>
+                <div style={{ height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${k.stops.map(([v, c]) => `${c} ${(v / k.magMax) * 100}%`).join(', ')})` }} />
+                <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-dim)', marginTop: 2, fontSize: '0.625rem' }}>
+                  <span>{flowKind === 'wind' ? 'calm' : 'flat'}</span><span>{top}</span>
+                </div>
+                <div style={{ color: 'var(--color-text-dim)', marginTop: '0.4rem', lineHeight: 1.4 }}>
+                  {flowKind === 'wind'
+                    ? `Live wind from ${flowStations} buoys reporting in the last 3 h. Colour = wind speed.`
+                    : `Swell from ${flowStations} buoys. Streams move at the swell's real travel speed (0.78 × period), so long-period swell from distant storms runs fastest. Colour = swell height.`}
+                  {' '}Streams fade with distance from a buoy — dark water is unmeasured, not calm.
+                </div>
+              </>
+            )
+          })()}
         </div>
 
         {/* Research region control */}
