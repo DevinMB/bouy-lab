@@ -193,3 +193,29 @@ def test_parse_station_table_south_west_negative():
     assert len(stations) == 1
     assert stations[0]["lat"] == pytest.approx(-10.5)
     assert stations[0]["lon"] == pytest.approx(-20.3)
+
+
+# ── spectral wave directions (compass text in .spec) ──────────────────────────
+
+def test_spec_row_parses_compass_swell_direction():
+    """The real 46026 line from 2026-10-20. SwD/WWD are compass text; until the
+    fix they were coerce_float'ed to None on every observation ever stored."""
+    from buoys.parsing import parse_spec_row
+    row = "2026 10 20 20 40  1.9  1.9 13.8  0.2  3.6 WNW WNW      SWELL 10.9 296".split()
+    v = parse_spec_row(row)["values"]
+    assert v["swellDirection"] == 292.5
+    assert v["windWaveDirection"] == 292.5
+    assert v["meanWaveDirection"] == 296.0  # already degrees in the file
+    assert v["swellPeriod"] == 13.8
+
+
+def test_coerce_direction_covers_the_compass_and_degrees():
+    from buoys.parsing import coerce_direction
+    assert coerce_direction("N") == 0.0
+    assert coerce_direction("SSE") == 157.5
+    assert coerce_direction("nnw") == 337.5
+    assert coerce_direction("296") == 296.0
+    assert coerce_direction("360") == 0.0
+    assert coerce_direction("MM") is None
+    assert coerce_direction("") is None
+    assert coerce_direction("NORTHISH") is None
