@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # Patch and minor updates arrive as one PR per ecosystem; majors stay
+  # separate and wait for Devin.
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    groups:
+      updates:
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    groups:
+      updates:
+        update-types: [minor, patch]
+  - package-ecosystem: docker
+    directories: [/backend, /frontend]
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    groups:
+      updates:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    groups:
+      updates:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "DevinMB/workflows/*"

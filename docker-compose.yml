@@ -1,3 +1,4 @@
+# Local development. Production runs from DevinMB/homelab-stacks (sites/home/bouy-lab).
 name: world-of-buoys
 
 services:
@@ -38,13 +39,11 @@ services:
       start_period: 15s
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        # Baked into the bundle at build time — rebuild this service after
-        # changing CARTO_API_KEY in .env.
-        VITE_CARTO_API_KEY: ${CARTO_API_KEY:-}
+    build: ./frontend
     image: world-of-buoys-frontend:latest
+    # Read at container start into /config.js; no rebuild needed to change it.
+    environment:
+      CARTO_API_KEY: ${CARTO_API_KEY:-}
     depends_on:
       backend:
         condition: service_healthy
