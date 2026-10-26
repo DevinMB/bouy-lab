@@ -23,6 +23,15 @@ updates:
     groups:
       updates:
         update-types: [minor, patch]
+    ignore:
+      # nginx odd minors are the mainline branch; this repo tracks stable (even).
+      # Patches still flow; the next stable minor is a deliberate bump.
+      - dependency-name: nginx
+        update-types: [version-update:semver-minor]
+      # Python 3.13+ has no confluent-kafka 2.4 wheels; revisit with a newer
+      # confluent-kafka (Phase 3 step 3a).
+      - dependency-name: python
+        update-types: [version-update:semver-minor]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly, day: monday }
