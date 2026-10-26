@@ -1,0 +1,29 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write       # the gate merges Dependabot PRs
+  pull-requests: write  # ...and labels majors
+  packages: write       # push to GHCR on main
+  actions: write        # the gate starts the main build after merging
+jobs:
+  # Shared pipeline: github.com/DevinMB/workflows. Two images, one gate after both.
+  backend:
+    uses: DevinMB/workflows/.github/workflows/app-ci.yml@main
+    with:
+      image: ghcr.io/devinmb/bouy-lab-backend
+      context: backend
+      test-command: python -m pytest -q -p no:cacheprovider tests
+      gate: false
+  frontend:
+    uses: DevinMB/workflows/.github/workflows/app-ci.yml@main
+    with:
+      image: ghcr.io/devinmb/bouy-lab-frontend
+      context: frontend
+      gate: false
+  gate:
+    needs: [backend, frontend]
+    uses: DevinMB/workflows/.github/workflows/dependabot-gate.yml@main

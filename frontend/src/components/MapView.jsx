@@ -18,10 +18,10 @@ const L = window.L
 const DetailPanel = lazy(() => import('./DetailPanel'))
 
 // CARTO raster basemaps require an API key — without it every tile carries an
-// "API key required" watermark. Injected at build time from CARTO_API_KEY in
-// .env (see docker-compose frontend build args). Blank key = unkeyed URL, which
-// still renders, just watermarked.
-const CARTO_KEY = import.meta.env.VITE_CARTO_API_KEY || ''
+// "API key required" watermark. Read at runtime from /config.js, which the
+// container writes from CARTO_API_KEY at start (VITE_CARTO_API_KEY still works
+// for local dev). Blank key = unkeyed URL, which still renders, just watermarked.
+const CARTO_KEY = window.__WOB_CONFIG__?.cartoKey || import.meta.env.VITE_CARTO_API_KEY || ''
 const CARTO_TILES =
   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' +
   (CARTO_KEY ? `?key=${encodeURIComponent(CARTO_KEY)}` : '')
