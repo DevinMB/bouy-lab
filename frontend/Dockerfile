@@ -13,7 +13,7 @@ RUN npx -y npm@11 ci
 COPY . .
 RUN npm run build
 
-FROM nginx:1.30.6-alpine
+FROM nginx:1.31.0-alpine
 # Alpine security fixes land between base image releases; CI's Trivy gate
 # fails on fixable HIGH and CRITICAL findings.
 RUN apk upgrade --no-cache

@@ -1,7 +1,7 @@
 # One image, four roles chosen by command in the stack: the API (default),
 # ingest, retention and the retired Kafka sink. Python 3.12: confluent-kafka
 # 2.4 has no newer wheels.
-FROM python:3.12.14-slim-trixie
+FROM python:3.14.7-slim-trixie
 
 # Debian security fixes land between base image releases; CI's Trivy gate
 # fails on fixable HIGH and CRITICAL findings.
