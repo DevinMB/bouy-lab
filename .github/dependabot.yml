@@ -14,6 +14,10 @@ updates:
     schedule: { interval: weekly, day: monday }
     cooldown: { default-days: 14 }
     groups:
+      # react and react-dom only install at the same version, so they arrive
+      # as one PR, majors included.
+      react:
+        patterns: ["react", "react-dom"]
       updates:
         update-types: [minor, patch]
   - package-ecosystem: docker
