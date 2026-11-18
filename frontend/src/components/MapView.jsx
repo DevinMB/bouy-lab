@@ -40,9 +40,26 @@ function isRecent(buoy) {
   }
 }
 
+// Colour with alpha, for rgb()/rgba() or #hex inputs (thermal/corr ramps return rgb()).
+function alpha(color, a) {
+  if (!color) return `rgba(255,255,255,${a})`
+  const m = color.match(/rgba?\(([^)]+)\)/)
+  if (m) {
+    const [r, g, b] = m[1].split(',').map((x) => x.trim())
+    return `rgba(${r},${g},${b},${a})`
+  }
+  let h = color.replace('#', '')
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('')
+  const n = parseInt(h.slice(0, 6), 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
+}
+
 function createMarkerIcon(color, size = 10, ring = false) {
-  const border = ring ? '2.5px solid #fff' : '1.5px solid rgba(255,255,255,0.35)'
-  const glow = ring ? 'box-shadow:0 0 6px 2px rgba(255,255,255,0.55);' : ''
+  // Dark keyline separates markers from any basemap; selected gets a white ring + halo.
+  const border = ring ? '2.5px solid #fff' : '1.5px solid rgba(7,13,18,0.85)'
+  const glow = ring
+    ? `box-shadow:0 0 0 4px ${alpha(color, 0.33)},0 0 14px 2px ${alpha(color, 0.55)};`
+    : 'box-shadow:0 0 0 1px rgba(255,255,255,0.18);'
   return L.divIcon({
     className: '',
     html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${border};${glow}"></div>`,
@@ -69,7 +86,8 @@ function createClusterIcon(cluster) {
   const size = count < 10 ? 30 : count < 50 ? 36 : 42
   return L.divIcon({
     className: '',
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.4);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11px;color:rgba(255,255,255,0.9);">${count}</div>`,
+    // Dark core + colour ring: the mean reading reads as colour, the count stays legible.
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(9,17,24,0.88);border:2.5px solid ${color};box-shadow:0 0 0 3px ${alpha(color, 0.2)},0 4px 10px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-variant-numeric:tabular-nums;font-size:11.5px;color:#f1f6f9;">${count}</div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   })
@@ -225,7 +243,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
           interactive: false,
           icon: L.divIcon({
             className: '',
-            html: `<div style="transform:translate(-50%,-50%);background:rgba(8,19,24,0.92);border:1px solid ${color};border-radius:8px;padding:0 4px;font-family:var(--font-mono);font-size:10px;color:#e8f4f8;white-space:nowrap;">+${ldr.lagHours}h</div>`,
+            html: `<div style="transform:translate(-50%,-50%);background:rgba(9,17,24,0.92);border:1px solid ${color};border-radius:999px;padding:1px 6px;font-family:var(--font-mono);font-size:10px;color:#e8f4f8;white-space:nowrap;">+${ldr.lagHours}h</div>`,
             iconSize: [0, 0],
           }),
         }).addTo(layer)
@@ -347,15 +365,15 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
 
       {/* Correlation overlay banner + legend */}
       {correlationOverlay && (
-        <div style={{ position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)', zIndex: 600, width: 280, maxWidth: 'calc(100% - 1.5rem)', background: 'rgba(13,33,41,0.95)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)' }}>
+        <div className="glass" style={{ position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)', zIndex: 600, width: 300, maxWidth: 'calc(100% - 1.5rem)', padding: '0.75rem 0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--color-text)' }}>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text)' }}>
               Correlation vs <b className="mono" style={{ color: 'var(--color-text-bright)' }}>{correlationOverlay.refName || correlationOverlay.refId}</b>
               <div style={{ color: 'var(--color-text-dim)' }}>{correlationOverlay.label}</div>
             </div>
             <button className="btn" style={{ padding: '0.2rem 0.55rem', flex: 'none' }} onClick={onExitOverlay}>Exit</button>
           </div>
-          <div style={{ height: 8, borderRadius: 4, background: corrGradient(), marginTop: '0.5rem' }} />
+          <div style={{ height: 6, borderRadius: 999, background: corrGradient(), marginTop: '0.5rem' }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.625rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-dim)', marginTop: '0.2rem' }}>
             <span>−1 inverse</span><span>0</span><span>+1 together</span>
           </div>
@@ -364,9 +382,9 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
 
       {/* Propagation overlay banner */}
       {propagationOverlay && (
-        <div style={{ position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)', zIndex: 600, width: 300, maxWidth: 'calc(100% - 1.5rem)', background: 'rgba(13,33,41,0.95)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)' }}>
+        <div className="glass" style={{ position: 'absolute', top: '0.75rem', left: '50%', transform: 'translateX(-50%)', zIndex: 600, width: 320, maxWidth: 'calc(100% - 1.5rem)', padding: '0.75rem 0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--color-text)' }}>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text)' }}>
               Propagation → <b className="mono" style={{ color: 'var(--color-text-bright)' }}>{propagationOverlay.targetName || propagationOverlay.targetId}</b>
               <div style={{ color: 'var(--color-text-dim)' }}>{propagationOverlay.label} · arrows from upstream leaders</div>
             </div>
@@ -382,14 +400,14 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
           is open, since that panel goes full-screen on mobile. */}
       {!selectedBuoy && (
         <button className="map-controls-toggle" onClick={() => setFiltersOpen((o) => !o)} aria-label="Toggle controls">
-          {filtersOpen ? '✕' : '☰'} Filters
+          {filtersOpen ? '✕ Close' : '☰ Filters'}
         </button>
       )}
       {filtersOpen && !selectedBuoy && <div className="map-backdrop" onClick={() => setFiltersOpen(false)} />}
 
       {/* Left control column: filter rail + research region (drawer on mobile).
           Kept on the left so the right-side detail panel never covers it. */}
-      <div className={`map-overlay-left${filtersOpen && !selectedBuoy ? ' open' : ''}`} style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', width: 220, maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto', zIndex: 400, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <div className={`map-overlay-left${filtersOpen && !selectedBuoy ? ' open' : ''}`} style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', width: 248, maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto', zIndex: 400, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         <FilterRail
           buoys={buoys}
           filters={filters}
@@ -398,13 +416,12 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
         />
 
         {/* Flow overlay control */}
-        <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>
+        <div className="glass" style={{ padding: '0.75rem 0.875rem', fontSize: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: flowKind ? '0.5rem' : 0 }}>
-            <span style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)' }}>Flow</span>
-            <div style={{ display: 'flex', gap: 2 }}>
+            <span className="eyebrow">Flow</span>
+            <div className="segmented small" role="group" aria-label="Flow layer">
               {[[null, 'Off'], ['wind', 'Wind'], ['swell', 'Swell']].map(([k, label]) => (
-                <button key={label} className={`btn${flowKind === k ? ' btn-amber' : ''}`} onClick={() => setFlowKind(k)}
-                  style={{ padding: '0.15rem 0.45rem', fontSize: '0.6875rem' }}>{label}</button>
+                <button key={label} aria-pressed={flowKind === k} onClick={() => setFlowKind(k)}>{label}</button>
               ))}
             </div>
           </div>
@@ -415,7 +432,7 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
               : (useMetric ? '5+ m' : '16+ ft')
             return (
               <>
-                <div style={{ height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${k.stops.map(([v, c]) => `${c} ${(v / k.magMax) * 100}%`).join(', ')})` }} />
+                <div style={{ height: 6, borderRadius: 999, background: `linear-gradient(90deg, ${k.stops.map(([v, c]) => `${c} ${(v / k.magMax) * 100}%`).join(', ')})` }} />
                 <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-dim)', marginTop: 2, fontSize: '0.625rem' }}>
                   <span>{flowKind === 'wind' ? 'calm' : 'flat'}</span><span>{top}</span>
                 </div>
@@ -431,8 +448,8 @@ export default function MapView({ buoys, useMetric, selectedBuoy, onSelectBuoy, 
         </div>
 
         {/* Research region control */}
-        <div style={{ background: 'rgba(13, 33, 41, 0.92)', border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.625rem 0.75rem', backdropFilter: 'blur(6px)', fontSize: '0.6875rem' }}>
-          <div style={{ textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>Research Region</div>
+        <div className="glass" style={{ padding: '0.75rem 0.875rem', fontSize: '0.75rem' }}>
+          <div className="eyebrow" style={{ marginBottom: '0.5rem' }}>Research region</div>
           {isNarrow ? (
             <div style={{ color: 'var(--color-text-dim)' }}>Region drawing is available on <b style={{ color: 'var(--color-text)' }}>desktop only</b> — it needs a larger screen to lasso an area.</div>
           ) : drawing ? (

@@ -8,6 +8,19 @@ const Nearby = lazy(() => import('./components/Nearby'))
 const Research = lazy(() => import('./components/Research'))
 
 const REFRESH_INTERVAL = 60_000
+const TABS = ['map', 'trends', 'operations', 'nearby', 'research']
+
+// A moored buoy in plan: hull ring, mast light. Amber = the app's signal colour.
+function BrandMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true">
+      <circle cx="14" cy="14" r="13" fill="var(--color-surface)" stroke="var(--color-border-2)" />
+      <path d="M4 18.5c2.5 0 2.5-1.5 5-1.5s2.5 1.5 5 1.5 2.5-1.5 5-1.5 2.5 1.5 5 1.5" fill="none" stroke="#3b82f6" strokeWidth="1.4" strokeLinecap="round" opacity="0.8" />
+      <path d="M10.5 16.5 14 7l3.5 9.5z" fill="var(--color-text-bright)" />
+      <circle cx="14" cy="6.5" r="2" fill="var(--color-amber)" />
+    </svg>
+  )
+}
 
 // Deep-link routing: /buoy/<id> opens that buoy. nginx SPA fallback serves
 // index.html for these paths, so no server route is needed.
@@ -21,6 +34,7 @@ export default function App() {
   const [buoys, setBuoys] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [fetchFailed, setFetchFailed] = useState(false)
   const [useMetric, setUseMetric] = useState(false)
   const [selectedBuoy, setSelectedBuoy] = useState(null)
   const [nearbyOrigin, setNearbyOrigin] = useState(null)
@@ -38,8 +52,10 @@ export default function App() {
     try {
       const data = await fetchBuoys(true)
       setBuoys(data)
+      setFetchFailed(false)
     } catch (e) {
       console.error('Failed to fetch buoys:', e)
+      setFetchFailed(true)
     } finally {
       setLoading(false)
     }
@@ -131,36 +147,40 @@ export default function App() {
   return (
     <>
       <header className="header">
-        <h1>
-          World of <span>Buoys</span>
-        </h1>
-        <div className="header-spacer" />
-        {!loading && (
-          <div className="count-chip">
-            {buoys.length} stations /{' '}
-            <span className="alive">{reporting} reporting</span>
-          </div>
-        )}
-        <button
-          className="unit-toggle"
-          onClick={() => setUseMetric((m) => !m)}
-          title="Toggle units"
-        >
-          {useMetric ? '°C / metric' : '°F / imperial'}
-        </button>
-      </header>
+        <div className="brand">
+          <BrandMark />
+          <h1>
+            World of <span>Buoys</span>
+          </h1>
+        </div>
 
-      <nav className="tab-bar">
-        {['map', 'trends', 'operations', 'nearby', 'research'].map((t) => (
-          <div
-            key={t}
-            className={`tab${tab === t ? ' active' : ''}`}
-            onClick={() => setTab(t)}
-          >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+        <nav className="segmented nav-tabs" role="tablist" aria-label="Sections">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+            >
+              {t.charAt(0).toUpperCase() + t.slice(1)}
+            </button>
+          ))}
+        </nav>
+
+        <div className="header-right">
+          {!loading && (
+            <div className="live-status" title={fetchFailed ? 'Last refresh failed — showing cached data' : 'Live — refreshes every minute'}>
+              <span className={`pulse${fetchFailed ? ' stale' : ''}`} />
+              <span><b>{reporting}</b> reporting</span>
+              <span className="detail">of {buoys.length} stations</span>
+            </div>
+          )}
+          <div className="segmented small" role="group" aria-label="Units">
+            <button aria-pressed={!useMetric} onClick={() => setUseMetric(false)}>°F</button>
+            <button aria-pressed={useMetric} onClick={() => setUseMetric(true)}>°C</button>
           </div>
-        ))}
-      </nav>
+        </div>
+      </header>
 
       <div className="app-content">
         {/* MapView always mounted — hidden via CSS when not active */}
