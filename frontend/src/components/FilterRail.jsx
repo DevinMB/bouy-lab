@@ -30,52 +30,46 @@ export default function FilterRail({ buoys, filters, onFiltersChange, useMetric 
   }
 
   return (
-    <div style={{
-      background: 'rgba(13, 33, 41, 0.92)',
-      border: '1px solid var(--color-border)',
-      borderRadius: 8,
-      padding: '0.75rem',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '0.625rem',
-      backdropFilter: 'blur(6px)',
-    }}>
+    <div className="glass" style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
       {/* Search */}
-      <input
-        className="input"
-        placeholder="Search station…"
-        value={filters.text || ''}
-        onChange={(e) => onFiltersChange({ ...filters, text: e.target.value })}
-        style={{ fontSize: '0.75rem' }}
-      />
+      <div className="search-field">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" />
+        </svg>
+        <input
+          className="input"
+          type="search"
+          placeholder="Search station or ID"
+          aria-label="Search stations"
+          value={filters.text || ''}
+          onChange={(e) => onFiltersChange({ ...filters, text: e.target.value })}
+        />
+      </div>
 
       {/* Stream toggles */}
       <div>
-        <div style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.375rem' }}>Streams</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.45rem' }}>
+          <span className="eyebrow">Sensors</span>
+          {filters.streams?.length > 0 && (
+            <button className="eyebrow" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-amber)' }}
+              onClick={() => onFiltersChange({ ...filters, streams: [] })}>Show all</button>
+          )}
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
           {STREAMS.map((stream) => {
-            const active = !filters.streams?.length || filters.streams.includes(stream)
+            const on = filters.streams?.includes(stream)
+            const c = STREAM_COLORS[stream]
             return (
               <button
                 key={stream}
+                className="chip"
+                aria-pressed={!!on}
                 onClick={() => toggleStream(stream)}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 12,
-                  border: `1px solid ${active ? STREAM_COLORS[stream] : 'var(--color-border)'}`,
-                  background: active ? `${STREAM_COLORS[stream]}22` : 'transparent',
-                  color: active ? STREAM_COLORS[stream] : 'var(--color-text-dim)',
-                  fontSize: '0.6875rem',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                }}
+                style={on ? { borderColor: c, background: `color-mix(in srgb, ${c} 16%, transparent)`, color: 'var(--color-text-bright)' } : undefined}
               >
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: STREAM_COLORS[stream], display: 'inline-block' }} />
+                <span className="dot" style={{ background: c }} />
                 {STREAM_LABELS[stream]}
-                <span style={{ opacity: 0.6 }}>{streamCounts[stream]}</span>
+                <span className="count">{streamCounts[stream]}</span>
               </button>
             )
           })}
@@ -83,23 +77,23 @@ export default function FilterRail({ buoys, filters, onFiltersChange, useMetric 
       </div>
 
       {/* Reporting toggle */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>
+      <label className="switch">
+        <span>Reporting in last 24h</span>
         <input
           type="checkbox"
           checked={filters.reportingOnly || false}
           onChange={(e) => onFiltersChange({ ...filters, reportingOnly: e.target.checked })}
-          style={{ accentColor: 'var(--color-amber)' }}
         />
-        Reporting only (24h)
       </label>
 
       {/* Thermal legend */}
       <div>
-        <div style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-text-dim)', marginBottom: '0.25rem' }}>SST</div>
-        <div style={{ height: 8, borderRadius: 4, background: thermalGradient(20) }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.625rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-dim)', marginTop: '0.2rem' }}>
-          <span>{useMetric ? '−2 °C' : '28 °F'}</span>
-          <span>{useMetric ? '31 °C' : '88 °F'}</span>
+        <div className="eyebrow" style={{ marginBottom: '0.4rem' }}>Sea surface temp</div>
+        <div style={{ height: 6, borderRadius: 999, background: thermalGradient(20) }} />
+        <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.625rem', color: 'var(--color-text-dim)', marginTop: '0.3rem' }}>
+          <span>{useMetric ? '−2°C' : '28°F'}</span>
+          <span>{useMetric ? '14.5°' : '58°'}</span>
+          <span>{useMetric ? '31°C' : '88°F'}</span>
         </div>
       </div>
     </div>

@@ -1,20 +1,29 @@
-/* ── Deep-water telemetry design system ── */
+/* ── Instrument design system ──
+   Ink-navy ground, hairline structure, amber reserved for state and action.
+   The map is the page: chrome floats over it as glass cards (.glass). */
 :root {
-  --color-bg: #081318;
-  --color-bg-2: #0b1a20;
-  --color-bg-3: #0d2129;
-  --color-bg-4: #102833;
-  --color-surface: #132f3c;
-  --color-surface-2: #1a3d4d;
-  --color-border: #1e4a5c;
-  --color-border-2: #245566;
-  --color-text: #b8d4dc;
-  --color-text-dim: #5a8a99;
-  --color-text-bright: #e8f4f8;
+  --color-bg: #070d12;
+  --color-bg-2: #0a1219;
+  --color-bg-3: #0d1720;
+  --color-bg-4: #111d27;
+  --color-surface: #15232e;
+  --color-surface-2: #1b2c39;
+  --color-border: rgba(150, 186, 206, 0.11);
+  --color-border-2: rgba(150, 186, 206, 0.2);
+  --color-text: #c3d2db;
+  --color-text-dim: #71899a;
+  --color-text-bright: #f1f6f9;
   --color-amber: #ffb627;
-  --color-amber-dim: rgba(255, 182, 39, 0.15);
-  --color-green: #22c55e;
-  --color-error: #ef4444;
+  --color-amber-dim: rgba(255, 182, 39, 0.14);
+  --color-green: #34d399;
+  --color-error: #f87171;
+
+  --glass: rgba(9, 17, 24, 0.82);
+  --glass-strong: rgba(9, 17, 24, 0.94);
+  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px -8px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.35);
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
 
   --font-display: 'Archivo', sans-serif;
   --font-body: 'IBM Plex Sans', sans-serif;
@@ -47,12 +56,41 @@ body {
   overflow: hidden;
 }
 
-/* ── Header ── */
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+/* Small-caps label: the one voice for every field name in the app */
+.eyebrow,
+.panel-label {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-text-dim);
+}
+
+.panel-label {
+  margin-bottom: 0.5rem;
+}
+
+.num {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ── Header: brand · segmented nav · live status · units ── */
 .header {
-  background: var(--color-bg-3);
+  background: var(--color-bg-2);
   border-bottom: 1px solid var(--color-border);
-  padding: 0 1.5rem;
-  height: 52px;
+  padding: 0 1rem;
+  height: 56px;
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -60,12 +98,26 @@ body {
   z-index: 10;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
 .header h1 {
   font-family: var(--font-display);
-  font-weight: 900;
-  font-size: 1.125rem;
+  font-weight: 800;
+  font-size: 1rem;
   color: var(--color-text-bright);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   white-space: nowrap;
 }
 
@@ -73,62 +125,113 @@ body {
   color: var(--color-amber);
 }
 
+.header-right {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .header-spacer {
   flex: 1;
 }
 
-.count-chip {
+/* Segmented control — nav tabs, unit toggle, and any 2–5 way choice */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+
+.segmented button {
+  border: none;
+  background: transparent;
+  color: var(--color-text-dim);
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s;
+}
+
+.segmented button:hover {
+  color: var(--color-text-bright);
+}
+
+.segmented button[aria-pressed='true'],
+.segmented button[aria-selected='true'] {
+  background: var(--color-surface-2);
+  color: var(--color-text-bright);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--color-border-2) inset;
+}
+
+.segmented.small button {
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
   font-family: var(--font-mono);
+}
+
+.nav-tabs {
+  flex: none;
+}
+
+/* Live status: a pulse, not a pill of numbers */
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.75rem;
   color: var(--color-text-dim);
-  padding: 0.25rem 0.625rem;
-  background: var(--color-bg-4);
-  border: 1px solid var(--color-border);
-  border-radius: 20px;
   white-space: nowrap;
 }
 
-.count-chip .alive {
-  color: var(--color-green);
-}
-
-/* ── Tab bar ── */
-.tab-bar {
-  display: flex;
-  background: var(--color-bg-3);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.tab {
-  padding: 0 1.25rem;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  font-size: 0.8rem;
+.live-status b {
+  color: var(--color-text-bright);
   font-weight: 500;
-  color: var(--color-text-dim);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-  user-select: none;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
 }
 
-.tab:hover {
-  color: var(--color-text);
+.pulse {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-green);
+  flex: none;
 }
 
-.tab.active {
-  color: var(--color-amber);
-  border-bottom-color: var(--color-amber);
+.pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: pulse 2.4s ease-out infinite;
 }
 
-/* ── Toggle button ── */
+.pulse.stale {
+  background: var(--color-error);
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  80%, 100% { transform: scale(3); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse::after { animation: none; }
+}
+
+/* Legacy toggle (kept for any remaining callers) */
 .unit-toggle {
   padding: 0.25rem 0.75rem;
-  border-radius: 4px;
+  border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text-dim);
@@ -139,11 +242,6 @@ body {
   white-space: nowrap;
 }
 
-.unit-toggle:hover {
-  border-color: var(--color-amber);
-  color: var(--color-amber);
-}
-
 /* ── App content ── */
 .app-content {
   flex: 1;
@@ -151,11 +249,21 @@ body {
   overflow: hidden;
 }
 
+/* ── Floating glass card (map overlays, detail sheet) ── */
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
 /* ── Panel ── */
 .panel {
-  background: var(--color-surface);
+  background: var(--color-bg-3);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .panel-section {
@@ -167,81 +275,111 @@ body {
   border-bottom: none;
 }
 
-.panel-label {
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-dim);
-  margin-bottom: 0.5rem;
-}
-
-/* ── Stat cards ── */
+/* ── Stat cards: hairline-divided strip, big numerals ── */
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
+  gap: 1px;
+  margin-bottom: 1.5rem;
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .stat-card {
-  background: var(--color-bg-4);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 0.875rem 1rem;
+  background: var(--color-bg-3);
+  padding: 1rem 1.125rem 1.125rem;
 }
 
 .stat-card .label {
-  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--color-text-dim);
 }
 
 .stat-card .value {
-  font-family: var(--font-mono);
-  font-size: 1.5rem;
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 1.875rem;
+  letter-spacing: -0.02em;
   color: var(--color-text-bright);
-  margin-top: 0.25rem;
+  margin-top: 0.375rem;
   line-height: 1;
 }
 
 /* ── Buttons ── */
 .btn {
-  padding: 0.375rem 0.875rem;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
+  padding: 0.4rem 0.875rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-2);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 0.8125rem;
   font-family: var(--font-body);
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
 }
 
 .btn:hover {
-  border-color: var(--color-border-2);
+  background: var(--color-surface-2);
   color: var(--color-text-bright);
 }
 
 .btn.active,
 .btn.btn-amber {
   background: var(--color-amber-dim);
-  border-color: var(--color-amber);
+  border-color: rgba(255, 182, 39, 0.5);
   color: var(--color-amber);
 }
 
 .btn.btn-primary {
   background: var(--color-amber);
   border-color: var(--color-amber);
-  color: #111;
-  font-weight: 500;
+  color: #1a1204;
+  font-weight: 600;
 }
 
 .btn.btn-primary:hover {
-  opacity: 0.9;
+  background: #ffc34d;
+}
+
+.btn.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-dim);
+}
+
+.btn.btn-ghost:hover {
+  background: var(--color-surface);
+  color: var(--color-text-bright);
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-2);
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.icon-btn:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-bright);
 }
 
 /* ── Loading veil ── */
@@ -249,9 +387,24 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 0.6rem;
   height: 100%;
   color: var(--color-text-dim);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+}
+
+.loading-veil::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border-2);
+  border-top-color: var(--color-amber);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Mono ── */
@@ -261,44 +414,63 @@ body {
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-2);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-2);
-  border-radius: 3px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
-/* ── Operations page ── */
+/* ── Content pages (Trends / Operations / Research share these) ── */
 .ops-page {
   height: 100%;
   overflow-y: auto;
-  padding: 1.25rem;
+  padding: 1.75rem clamp(1rem, 3vw, 2.5rem) 3rem;
+}
+
+.ops-page > * {
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .ops-section {
-  margin-bottom: 1.5rem;
+  margin-bottom: 2rem;
 }
 
 .ops-section-title {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-dim);
-  margin-bottom: 0.75rem;
   font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-text-dim);
+  margin-bottom: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Hairline that runs out from every section title */
+.ops-section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
 }
 
 .chart-container {
-  background: var(--color-bg-4);
+  background: var(--color-bg-3);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 0.75rem;
+  border-radius: var(--radius);
+  padding: 1rem;
 }
 
 /* ── Nearby page ── */
@@ -310,80 +482,450 @@ body {
 }
 
 .nearby-controls {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
-  background: var(--color-bg-3);
+  background: var(--color-bg-2);
   border-right: 1px solid var(--color-border);
-  padding: 1rem;
+  padding: 1.25rem;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.875rem;
+  gap: 1rem;
 }
 
 .nearby-results {
   flex: 1;
   overflow-y: auto;
-  padding: 0.75rem;
+  padding: 1rem;
 }
 
 .nearby-result-item {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  background: var(--color-bg-4);
+  gap: 0.875rem;
+  padding: 0.75rem 0.875rem;
+  background: var(--color-bg-3);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   margin-bottom: 0.5rem;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
 }
 
 .nearby-result-item:hover {
   border-color: var(--color-border-2);
+  background: var(--color-bg-4);
 }
 
 .temp-chip {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 400;
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.75rem;
   flex-shrink: 0;
   line-height: 1.2;
   text-align: center;
 }
 
 /* ── Input ── */
-.input {
+.input,
+select.input {
   width: 100%;
   background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-sm);
   color: var(--color-text);
   font-size: 0.8125rem;
-  padding: 0.375rem 0.625rem;
+  padding: 0.45rem 0.7rem;
   font-family: var(--font-body);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .input:focus {
-  border-color: var(--color-border-2);
+  border-color: rgba(255, 182, 39, 0.6);
+  box-shadow: 0 0 0 3px var(--color-amber-dim);
 }
 
 .input::placeholder {
   color: var(--color-text-dim);
 }
 
+.search-field {
+  position: relative;
+}
+
+.search-field svg {
+  position: absolute;
+  left: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-dim);
+  pointer-events: none;
+}
+
+.search-field .input {
+  padding-left: 2rem;
+}
+
+/* ── Filter chips ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-2);
+  background: transparent;
+  color: var(--color-text-dim);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.chip .count {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  opacity: 0.65;
+}
+
+.chip:hover {
+  color: var(--color-text-bright);
+}
+
+/* Switch (replaces the bare checkbox) */
+.switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--color-text);
+}
+
+.switch input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-2);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s;
+}
+
+.switch input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-text-dim);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.switch input:checked {
+  background: var(--color-amber-dim);
+  border-color: rgba(255, 182, 39, 0.6);
+}
+
+.switch input:checked::after {
+  transform: translateX(12px);
+  background: var(--color-amber);
+}
+
+/* ── Detail sheet ── */
+.detail-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  width: 380px;
+  max-width: calc(100% - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  z-index: 500;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--glass-strong);
+  animation: sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.detail-scroll {
+  overflow-y: auto;
+  flex: 1;
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-panel { animation: none; }
+}
+
+.detail-section {
+  padding: 1rem 1.125rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Hero: the water temperature, set like a headline */
+.hero-temp {
+  display: flex;
+  align-items: flex-start;
+  line-height: 0.9;
+  color: var(--color-text-bright);
+}
+
+.hero-temp .big {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 300;
+  font-size: 4.25rem;
+  letter-spacing: -0.04em;
+}
+
+.hero-temp .unit {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.5rem;
+  margin-top: 0.4rem;
+  margin-left: 0.15rem;
+  color: var(--color-text-dim);
+}
+
+/* Thermal scale: where this reading sits on the global SST range */
+.thermal-scale {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.thermal-scale .marker {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--color-text-bright);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.45);
+}
+
+.fresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.6rem 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 0.6875rem;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.fresh-pill b {
+  color: var(--color-text-bright);
+  font-weight: 500;
+}
+
+/* Conditions tiles */
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.tile {
+  background: var(--color-bg-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.8rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 108px;
+}
+
+.tile.wide {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.tile .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tile .value {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  color: var(--color-text-bright);
+  line-height: 1.05;
+}
+
+.tile .value small {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--color-text-dim);
+  margin-left: 0.2rem;
+  letter-spacing: 0;
+}
+
+.tile .note {
+  font-size: 0.75rem;
+  color: var(--color-text-dim);
+  line-height: 1.35;
+  margin-top: auto;
+}
+
+.tile.empty .value {
+  color: var(--color-text-dim);
+}
+
+/* Readout table with dotted leaders */
+.readout {
+  display: flex;
+  flex-direction: column;
+}
+
+.readout-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  padding: 0.3rem 0;
+}
+
+.readout-row .k {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.readout-row .leader {
+  flex: 1;
+  border-bottom: 1px dotted var(--color-border-2);
+  transform: translateY(-3px);
+  min-width: 1rem;
+}
+
+.readout-row .v {
+  color: var(--color-text-bright);
+  text-align: right;
+  max-width: 65%;
+}
+
+/* Metric tabs that drive the chart beneath them */
+.metric-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  overflow: hidden;
+}
+
+.metric-tab {
+  border: none;
+  background: var(--color-bg-3);
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: background 0.15s;
+}
+
+.metric-tab + .metric-tab {
+  border-left: 1px solid var(--color-border);
+}
+
+.metric-tab:hover {
+  background: var(--color-bg-4);
+}
+
+.metric-tab[aria-selected='true'] {
+  background: var(--color-bg-4);
+  border-bottom-color: var(--color-amber);
+}
+
+.metric-tab .num {
+  display: block;
+  font-size: 1.0625rem;
+  font-weight: 500;
+  color: var(--color-text-bright);
+  margin-top: 0.15rem;
+}
+
+.metric-tab .num small {
+  font-size: 0.6875rem;
+  color: var(--color-text-dim);
+  font-weight: 400;
+  margin-left: 0.15rem;
+}
+
+.metric-chart {
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 0.75rem 0.5rem 0.25rem;
+  background: var(--color-bg-3);
+}
+
+.detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.875rem 1.125rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-2);
+}
+
+.detail-actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
 /* ── Map attribution: minimal + unobtrusive ── */
 .leaflet-control-attribution {
-  background: rgba(8, 19, 24, 0.55) !important;
+  background: rgba(7, 13, 18, 0.55) !important;
   color: var(--color-text-dim) !important;
   font-size: 9px !important;
   padding: 1px 6px !important;
@@ -391,6 +933,23 @@ body {
 }
 .leaflet-control-attribution a {
   color: var(--color-text-dim) !important;
+}
+
+/* Leaflet zoom control → glass */
+.leaflet-bar {
+  border: 1px solid var(--color-border-2) !important;
+  border-radius: var(--radius) !important;
+  overflow: hidden;
+  box-shadow: var(--shadow-float) !important;
+}
+.leaflet-bar a {
+  background: var(--glass-strong) !important;
+  color: var(--color-text) !important;
+  border-bottom-color: var(--color-border) !important;
+}
+.leaflet-bar a:hover {
+  background: var(--color-surface-2) !important;
+  color: var(--color-text-bright) !important;
 }
 
 /* ── Map mobile controls (hidden on desktop) ── */
@@ -403,28 +962,46 @@ body {
 }
 
 /* ── Responsive ── */
-@media (max-width: 640px) {
-  .header {
-    padding: 0 0.875rem;
-    height: 48px;
-  }
-
-  /* Secondary info — reclaim header width on small screens */
-  .count-chip {
+@media (max-width: 900px) {
+  .live-status .detail {
     display: none;
   }
+}
 
-  /* Tabs scroll horizontally instead of overflowing */
-  .tab-bar {
+@media (max-width: 640px) {
+  /* Header wraps: brand + units on row one, nav scrolls on row two */
+  .header {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .brand {
+    order: 1;
+  }
+
+  .header-right {
+    order: 2;
+    flex: none;
+  }
+
+  .nav-tabs {
+    order: 3;
+    flex: 1 1 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
-  .tab-bar::-webkit-scrollbar {
+  .nav-tabs::-webkit-scrollbar {
     display: none;
   }
-  .tab {
-    padding: 0 1rem;
-    flex-shrink: 0;
+  .nav-tabs button {
+    flex: 1 0 auto;
+  }
+
+  .live-status {
+    display: none;
   }
 
   .nearby-page {
@@ -435,7 +1012,7 @@ body {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
-    max-height: 200px;
+    max-height: 220px;
   }
 
   .stat-cards {
@@ -446,20 +1023,21 @@ body {
   .map-controls-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 0.35rem;
     position: absolute;
     top: 0.6rem;
     left: 0.6rem;
     z-index: 700;
-    padding: 0.4rem 0.7rem;
-    border-radius: 6px;
-    border: 1px solid var(--color-border);
-    background: rgba(13, 33, 41, 0.95);
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-border-2);
+    background: var(--glass-strong);
     color: var(--color-text-bright);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
     cursor: pointer;
-    backdrop-filter: blur(6px);
+    box-shadow: var(--shadow-float);
+    backdrop-filter: blur(10px);
   }
 
   .map-backdrop {
@@ -471,7 +1049,7 @@ body {
   }
 
   .map-overlay-left {
-    top: 3.1rem !important;
+    top: 3.25rem !important;
     left: 0.6rem !important;
     right: 0.6rem !important;
     width: auto !important;
@@ -484,8 +1062,14 @@ body {
     display: flex !important;
   }
 
-  /* Detail panel fills the screen on phones */
+  /* Detail becomes a full-height sheet on phones */
   .detail-panel {
+    top: 0;
+    right: 0;
+    bottom: 0;
     width: 100vw !important;
+    max-width: none;
+    border-radius: 0;
+    border: none;
   }
 }
